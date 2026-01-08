@@ -1,0 +1,10 @@
+results_dir: /storage/results/
+
+llm_runner:
+  continue_on_length_cutoff: false
+  overwrite_existing_results: false
+  max_continuations: 3
+
+generation_defaults:
+  temperature: 0.2
+  num_predict: 512

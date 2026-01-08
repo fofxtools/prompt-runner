@@ -1,0 +1,16 @@
+# Each prompt must have:
+# - id: lowercase alphanumeric + underscore only
+# - prompt: string or block
+# - options: optional, passed verbatim to ollama
+
+- id: little_red_riding_hood
+  prompt: Write a modern version of Little Red Riding Hood.
+
+- id: adventure_story
+  prompt: |
+    Create a scene-by-scene outline for a story about a boy's quest to retrieve a magical artifact.
+    
+    It should follow him into middle age and fatherhood, and include romance and adventure.
+
+- id: electromagnetism
+  prompt: Explain electromagnetism to a high schooler.
