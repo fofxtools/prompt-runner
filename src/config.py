@@ -40,7 +40,9 @@ def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
     return config
 
 
-def load_prompts(prompts_path: str = "config/llm_prompts.yaml") -> List[Dict[str, Any]]:
+def load_llm_prompts(
+    prompts_path: str = "config/llm_prompts.yaml",
+) -> List[Dict[str, Any]]:
     """
     Load and validate prompts from the prompts configuration file.
 
@@ -147,7 +149,9 @@ def load_prompts(prompts_path: str = "config/llm_prompts.yaml") -> List[Dict[str
     return prompts
 
 
-def load_models(models_path: str = "config/llm_models.yaml") -> List[Dict[str, Any]]:
+def load_llm_models(
+    models_path: str = "config/llm_models.yaml",
+) -> List[Dict[str, Any]]:
     """
     Load and validate models from the models configuration file.
 

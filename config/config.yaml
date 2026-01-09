@@ -1,6 +1,6 @@
 # Relative path recommended (keeps results inside the project)
 results_dir: storage/results/
 
-generation_defaults:
+llm_generation_defaults:
   temperature: 0.2
   num_predict: 512

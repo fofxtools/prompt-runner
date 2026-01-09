@@ -1,3 +1,11 @@
+- name: deepseek-coder:6.7b
+- name: deepseek-r1:8b
 - name: gemma3:4b
 - name: llama3.1:8b
 - name: llava:7b
+- name: mistral-nemo:12b
+- name: mistral:7b
+- name: phi3:3.8b
+- name: qwen2.5-coder:7b
+- name: qwen2.5:7b
+- name: qwen3:8b
