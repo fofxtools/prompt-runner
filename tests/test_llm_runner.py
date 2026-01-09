@@ -3,7 +3,7 @@
 import json
 import pytest
 from unittest.mock import Mock
-from src.llm_runner import (
+from prompt_runner.llm_runner import (
     save_llm_summary,
     save_llm_result,
     generate_response_completion,
@@ -273,7 +273,7 @@ class TestRunLlmEval:
 
     def test_invalid_prompt_filter_raises_error(self):
         """Test that invalid prompt_filter raises ValueError."""
-        from src.llm_runner import run_llm_eval
+        from prompt_runner.llm_runner import run_llm_eval
 
         config = {"results_dir": "/tmp/test"}
         prompts = [{"id": "test", "prompt": "Test"}]
@@ -285,7 +285,7 @@ class TestRunLlmEval:
     @pytest.mark.parametrize("prompt_filter", ["completion", "chat", "all"])
     def test_valid_prompt_filters_accepted(self, prompt_filter):
         """Test that valid prompt_filter values are accepted without ValueError."""
-        from src.llm_runner import run_llm_eval
+        from prompt_runner.llm_runner import run_llm_eval
         from unittest.mock import patch
 
         config = {"results_dir": "/tmp/test"}
@@ -293,10 +293,11 @@ class TestRunLlmEval:
         models = [{"name": "test-model"}]
 
         # Mock all external dependencies to test only prompt_filter validation
-        with patch("src.utils.create_result_structure"), patch(
-            "src.llm_runner.save_llm_summary"
-        ), patch("src.llm_runner.save_llm_result"), patch(
-            "src.llm_runner.ollama.Client"
+        with (
+            patch("prompt_runner.utils.create_result_structure"),
+            patch("prompt_runner.llm_runner.save_llm_summary"),
+            patch("prompt_runner.llm_runner.save_llm_result"),
+            patch("prompt_runner.llm_runner.ollama.Client"),
         ):
             # Should not raise ValueError for valid prompt_filter values
             run_llm_eval(config, prompts, models, prompt_filter=prompt_filter)

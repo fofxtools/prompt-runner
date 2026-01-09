@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prompt-runner"
+version = "0.1.0"
+description = "LLM evaluation toolkit for running prompts across multiple models"
+requires-python = ">=3.10"
+dependencies = [
+    "ollama",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "mypy",
+    "pytest",
+    "ruff",
+    "types-PyYAML",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+prompt_runner = ["py.typed"]

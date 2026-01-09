@@ -1,7 +1,7 @@
 """Unit tests for src/utils.py"""
 
 import pytest
-from src.utils import (
+from prompt_runner.utils import (
     create_result_structure,
     generate_run_identifiers,
     merge_options,

@@ -1,7 +1,7 @@
 """Unit tests for src/config.py"""
 
 import pytest
-from src.config import load_config, load_llm_prompts, load_llm_models
+from prompt_runner.config import load_config, load_llm_prompts, load_llm_models
 
 
 class TestLoadConfig:
