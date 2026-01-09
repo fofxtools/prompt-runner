@@ -59,7 +59,9 @@ usage_tracking*.json
 /public/build/
 /public/storage
 
-# Temporary Files
+# Temporary Files / Backup Files
+*.bak
+*.tmp
 /temp/
 /tmp/
 /temp.php

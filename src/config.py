@@ -37,9 +37,6 @@ def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
     if "results_dir" not in config:
         raise ValueError("Config must contain 'results_dir' field")
 
-    if "llm_runner" not in config:
-        raise ValueError("Config must contain 'llm_runner' section")
-
     return config
 
 
@@ -49,7 +46,9 @@ def load_prompts(prompts_path: str = "config/llm_prompts.yaml") -> List[Dict[str
 
     Each prompt must have:
     - id: string matching regex ^[a-z0-9_]+$
-    - prompt: the prompt text
+    - prompt: the prompt text (for completion mode or simple chat)
+      OR
+    - messages: list of message dicts (for multi-turn chat)
     - options: (optional) dict of generation options
 
     Args:
@@ -87,8 +86,45 @@ def load_prompts(prompts_path: str = "config/llm_prompts.yaml") -> List[Dict[str
 
         prompt_id = prompt["id"]
 
-        if "prompt" not in prompt:
-            raise ValueError(f"Prompt at index {i} missing required 'prompt' field")
+        # Must have either 'prompt' or 'messages', but not both
+        has_prompt = "prompt" in prompt
+        has_messages = "messages" in prompt
+
+        if not has_prompt and not has_messages:
+            raise ValueError(
+                f"Prompt '{prompt_id}' must have either 'prompt' or 'messages' field"
+            )
+
+        if has_prompt and has_messages:
+            raise ValueError(
+                f"Prompt '{prompt_id}' cannot have both 'prompt' and 'messages' fields"
+            )
+
+        # Validate messages format if present
+        if has_messages:
+            if not isinstance(prompt["messages"], list):
+                raise ValueError(
+                    f"Prompt '{prompt_id}' field 'messages' must be a list"
+                )
+            if not prompt["messages"]:
+                raise ValueError(
+                    f"Prompt '{prompt_id}' field 'messages' must not be empty"
+                )
+            for msg_idx, msg in enumerate(prompt["messages"]):
+                if not isinstance(msg, dict):
+                    raise ValueError(
+                        f"Prompt '{prompt_id}' message at index {msg_idx} must be a dict"
+                    )
+                if "role" not in msg or "content" not in msg:
+                    raise ValueError(
+                        f"Prompt '{prompt_id}' message at index {msg_idx} must have 'role' and 'content'"
+                    )
+                valid_roles = {"system", "user", "assistant"}
+                if msg["role"] not in valid_roles:
+                    raise ValueError(
+                        f"Prompt '{prompt_id}' message at index {msg_idx} has invalid 'role'. "
+                        f"Must be one of: {valid_roles}"
+                    )
 
         if "options" in prompt and not isinstance(prompt["options"], dict):
             raise ValueError(

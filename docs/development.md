@@ -12,11 +12,7 @@ Check only (safe):
 ruff check src/ tests/
 ```
 
-Auto-fix (can make behavioral changes; use with care):
-
-```
-ruff check --fix src/ tests/
-```
+You can auto-fix with `ruff check --fix src/ tests/`. However auto-fix can make behavioral changes. Use with care.
 
 ## Correctness (similar to PHPStan)
 Run on folders separately to avoid module source file conflicts:

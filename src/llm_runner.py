@@ -1,0 +1,371 @@
+"""LLM runner logic for executing prompts across multiple models."""
+
+import json
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List
+
+import ollama
+
+from .utils import sanitize_fs_name
+
+
+def generate_run_identifiers() -> tuple[str, str, str]:
+    """
+    Generate run identifiers from the current UTC timestamp with random suffix.
+
+    Returns:
+        Tuple of (run_id, run_dir_name, created_at):
+        - run_id: Unique identifier with timestamp + random suffix (e.g., "2026-01-08T12:34:56Z-a3f2c1")
+        - run_dir_name: Filesystem-safe format for directory names (e.g., "2026-01-08_12-34-56Z-a3f2c1")
+        - created_at: ISO-8601 timestamp for sorting/filtering (e.g., "2026-01-08T12:34:56Z")
+
+    Examples:
+        >>> run_id, run_dir_name, created_at = generate_run_identifiers()
+        >>> # run_id: "2026-01-08T12:34:56Z-a3f2c1"
+        >>> # run_dir_name: "2026-01-08_12-34-56Z-a3f2c1"
+        >>> # created_at: "2026-01-08T12:34:56Z"
+    """
+    now = datetime.now(timezone.utc)
+
+    # ISO-8601 timestamp
+    created_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Random suffix for uniqueness (6 hex chars = 16.7M combinations)
+    suffix = secrets.token_hex(3)
+
+    # Unique run_id with timestamp + suffix
+    run_id = f"{created_at}-{suffix}"
+
+    # Filesystem-safe directory name with suffix
+    run_dir_name = now.strftime("%Y-%m-%d_%H-%M-%SZ") + f"-{suffix}"
+
+    return run_id, run_dir_name, created_at
+
+
+def create_result_structure(run_dir_name: str, results_dir: str) -> Path:
+    """
+    Create the result directory structure for a run.
+
+    Args:
+        run_dir_name: The filesystem-safe run directory name
+        results_dir: The base results directory path
+
+    Returns:
+        Path object for the created run directory
+
+    Raises:
+        FileExistsError: If the run directory already exists
+    """
+    results_path = Path(results_dir)
+    run_path = results_path / run_dir_name
+
+    if run_path.exists():
+        raise FileExistsError(f"Run directory already exists: {run_path}")
+
+    # Create the directory structure
+    run_path.mkdir(parents=True)
+
+    return run_path
+
+
+def save_llm_summary(
+    run_id: str,
+    run_dir_name: str,
+    created_at: str,
+    results_dir: str,
+    prompts: List[Dict[str, Any]],
+    models: List[Dict[str, Any]],
+) -> None:
+    """
+    Save the run summary metadata to summary.json.
+
+    Args:
+        run_id: The unique run identifier with timestamp + suffix
+        run_dir_name: The filesystem-safe run directory name
+        created_at: The ISO-8601 timestamp when the run was created
+        results_dir: The base results directory path
+        prompts: List of prompt dictionaries
+        models: List of model dictionaries
+
+    Raises:
+        FileNotFoundError: If the run directory does not exist
+    """
+    results_path = Path(results_dir)
+    run_path = results_path / run_dir_name
+    summary_path = run_path / "summary.json"
+
+    if not run_path.exists():
+        raise FileNotFoundError(f"Run directory does not exist: {run_path}")
+
+    # Extract prompt IDs and model names
+    prompt_ids = [prompt["id"] for prompt in prompts]
+    model_names = [model["name"] for model in models]
+
+    # Create summary structure
+    summary = {
+        "run_id": run_id,
+        "created_at": created_at,
+        "llm": {
+            "prompt_count": len(prompts),
+            "model_count": len(models),
+            "prompts": prompt_ids,
+            "models": model_names,
+        },
+    }
+
+    # Write summary to file
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+
+def save_llm_result(
+    run_dir_name: str,
+    results_dir: str,
+    prompt_id: str,
+    model_name: str,
+    mode: str,
+    result_data: Dict[str, Any],
+) -> None:
+    """
+    Save an LLM result to JSON and markdown files.
+
+    Args:
+        run_dir_name: The filesystem-safe run directory name
+        results_dir: The base results directory path
+        prompt_id: The prompt identifier
+        model_name: The model name (will be sanitized for filename)
+        mode: The generation mode ("completion" or "chat")
+        result_data: The complete result dictionary to save
+
+    Raises:
+        FileNotFoundError: If the run directory does not exist
+    """
+    results_path = Path(results_dir)
+    run_path = results_path / run_dir_name
+    prompt_path = run_path / "llm" / prompt_id
+
+    if not run_path.exists():
+        raise FileNotFoundError(f"Run directory does not exist: {run_path}")
+
+    # Create prompt directory if it doesn't exist
+    prompt_path.mkdir(parents=True, exist_ok=True)
+
+    # Create filename with mode suffix
+    sanitized_model = sanitize_fs_name(model_name)
+    result_file = prompt_path / f"{sanitized_model}__{mode}.json"
+
+    # Write JSON result to file
+    with open(result_file, "w", encoding="utf-8") as f:
+        json.dump(result_data, f, indent=2)
+
+    # Create markdown directory and save markdown file
+    markdown_path = prompt_path / "markdown"
+    markdown_path.mkdir(exist_ok=True)
+    markdown_file = markdown_path / f"{sanitized_model}__{mode}.md"
+
+    # Write markdown file with output text
+    with open(markdown_file, "w", encoding="utf-8") as f:
+        f.write(result_data["output"]["text"])
+
+
+def merge_options(
+    global_defaults: Dict[str, Any] | None,
+    model_options: Dict[str, Any] | None,
+    prompt_options: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """
+    Merge global defaults, model-level and prompt-level options.
+
+    Priority (lowest to highest):
+    1. Global defaults from config
+    2. Model-level options
+    3. Prompt-level options (highest priority)
+
+    Args:
+        global_defaults: Global generation defaults from config (can be None)
+        model_options: Options from the model configuration (can be None)
+        prompt_options: Options from the prompt configuration (can be None)
+
+    Returns:
+        Merged options dictionary (passed verbatim to ollama)
+    """
+    merged = {}
+
+    if global_defaults:
+        merged.update(global_defaults)
+
+    if model_options:
+        merged.update(model_options)
+
+    if prompt_options:
+        merged.update(prompt_options)
+
+    return merged
+
+
+def generate_response_completion(
+    client: ollama.Client, model: str, prompt: str, options: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Generate a response using the completion API (ollama.Client.generate).
+
+    Args:
+        client: Ollama client instance
+        model: Model name to use
+        prompt: Prompt text to send
+        options: Generation options to pass to ollama
+
+    Returns:
+        Dictionary with:
+        - text: Generated response text
+        - done_reason: Reason generation stopped
+    """
+    response = client.generate(model=model, prompt=prompt, options=options)
+
+    return {
+        "text": response["response"],
+        "done_reason": response.get("done_reason"),
+    }
+
+
+def generate_response_chat(
+    client: ollama.Client,
+    model: str,
+    messages: List[Dict[str, str]],
+    options: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Generate a response using the chat API (ollama.chat).
+
+    Args:
+        client: Ollama client instance
+        model: Model name to use
+        messages: List of message dicts with 'role' and 'content' keys
+        options: Generation options to pass to ollama
+
+    Returns:
+        Dictionary with:
+        - text: Generated response text
+        - done_reason: Reason generation stopped
+    """
+    response = client.chat(model=model, messages=messages, options=options)
+
+    return {
+        "text": response["message"]["content"],
+        "done_reason": response.get("done_reason"),
+    }
+
+
+def run_llm_eval(
+    config: Dict[str, Any],
+    prompts: List[Dict[str, Any]],
+    models: List[Dict[str, Any]],
+    prompt_filter: str = "all",
+) -> str:
+    """
+    Run LLM evaluation across selected prompts and models.
+
+    Args:
+        config: Configuration dictionary with 'results_dir' key
+        prompts: List of prompt dictionaries with 'id' and either 'prompt' or 'messages'
+        models: List of model dictionaries with 'name' key
+        prompt_filter: Which prompts to include - "completion", "chat", or "all" (default: "all")
+
+    Returns:
+        run_id: The ISO-8601 formatted run identifier
+
+    Raises:
+        ValueError: If prompt_filter is not "completion", "chat", or "all"
+    """
+    if prompt_filter not in ("completion", "chat", "all"):
+        raise ValueError(
+            f"Invalid prompt_filter: {prompt_filter}. Must be 'completion', 'chat', or 'all'"
+        )
+
+    # Generate run identifiers
+    run_id, run_dir_name, created_at = generate_run_identifiers()
+    results_dir = config["results_dir"]
+
+    # Create result directory structure
+    create_result_structure(run_dir_name, results_dir)
+
+    # Save run metadata
+    save_llm_summary(run_id, run_dir_name, created_at, results_dir, prompts, models)
+
+    # Initialize ollama client
+    client = ollama.Client()
+
+    # Get global defaults
+    global_defaults = config.get("generation_defaults")
+
+    # Process each prompt
+    for prompt_dict in prompts:
+        prompt_id = prompt_dict["id"]
+        prompt_options = prompt_dict.get("options")
+
+        # Determine prompt type based on structure
+        is_completion_prompt = "prompt" in prompt_dict
+        is_chat_prompt = "messages" in prompt_dict
+
+        # Filter prompts based on prompt_filter
+        if prompt_filter == "completion" and not is_completion_prompt:
+            continue
+        if prompt_filter == "chat" and not is_chat_prompt:
+            continue
+
+        # Validate prompt structure
+        if not is_completion_prompt and not is_chat_prompt:
+            raise ValueError(
+                f"Prompt '{prompt_id}' must have either 'prompt' or 'messages' field"
+            )
+
+        print(f"\nProcessing prompt: {prompt_id}")
+
+        # Process each model
+        for model_dict in models:
+            model_name = model_dict["name"]
+            model_options = model_dict.get("options")
+
+            # Merge options (global < model < prompt priority)
+            options = merge_options(global_defaults, model_options, prompt_options)
+
+            # Run prompt in its native form
+            if is_completion_prompt:
+                current_mode = "completion"
+                print(f"  Model: {model_name} (mode: {current_mode})")
+                prompt_text = prompt_dict["prompt"]
+                output = generate_response_completion(
+                    client, model_name, prompt_text, options
+                )
+            else:  # is_chat_prompt
+                current_mode = "chat"
+                print(f"  Model: {model_name} (mode: {current_mode})")
+                messages = prompt_dict["messages"]
+                output = generate_response_chat(client, model_name, messages, options)
+
+            # Create result dictionary
+            result_data = {
+                "run_id": run_id,
+                "created_at": created_at,
+                "prompt_id": prompt_id,
+                "model": model_name,
+                "mode": current_mode,
+                "output": output,
+            }
+
+            # Save result
+            save_llm_result(
+                run_dir_name,
+                results_dir,
+                prompt_id,
+                model_name,
+                current_mode,
+                result_data,
+            )
+
+            print("    ✓ Saved result")
+
+    print(f"\n✓ Evaluation complete. Run ID: {run_id}")
+    return run_id

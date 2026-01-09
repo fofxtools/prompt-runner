@@ -13,14 +13,14 @@ class TestLoadConfig:
         config_file.write_text(
             """
 results_dir: /storage/results/
-llm_runner:
-  continue_on_length_cutoff: false
-  max_continuations: 3
+generation_defaults:
+  temperature: 0.2
+  num_predict: 512
 """
         )
         config = load_config(str(config_file))
         assert config["results_dir"] == "/storage/results/"
-        assert "llm_runner" in config
+        assert "generation_defaults" in config
 
     def test_missing_file(self):
         """Test that missing file raises FileNotFoundError."""
@@ -30,14 +30,7 @@ llm_runner:
     def test_missing_results_dir(self, tmp_path):
         """Test that missing results_dir raises ValueError."""
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("llm_runner:\n  max_continuations: 3\n")
-        with pytest.raises(ValueError):
-            load_config(str(config_file))
-
-    def test_missing_llm_runner(self, tmp_path):
-        """Test that missing llm_runner raises ValueError."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("results_dir: /storage/\n")
+        config_file.write_text("generation_defaults:\n  temperature: 0.2\n")
         with pytest.raises(ValueError):
             load_config(str(config_file))
 
@@ -90,9 +83,82 @@ class TestLoadPrompts:
             load_prompts(str(prompts_file))
 
     def test_missing_prompt_field(self, tmp_path):
-        """Test that missing prompt field raises ValueError."""
+        """Test that missing both prompt and messages fields raises ValueError."""
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text("- id: test_id\n")
+        with pytest.raises(ValueError):
+            load_prompts(str(prompts_file))
+
+    def test_both_prompt_and_messages(self, tmp_path):
+        """Test that having both prompt and messages raises ValueError."""
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  prompt: "Hello"
+  messages:
+    - role: user
+      content: "Hi"
+"""
+        )
+        with pytest.raises(ValueError):
+            load_prompts(str(prompts_file))
+
+    def test_valid_messages_format(self, tmp_path):
+        """Test that valid messages format is accepted."""
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: chat_prompt
+  messages:
+    - role: system
+      content: "You are helpful"
+    - role: user
+      content: "Hello"
+"""
+        )
+        prompts = load_prompts(str(prompts_file))
+        assert len(prompts) == 1
+        assert prompts[0]["id"] == "chat_prompt"
+        assert len(prompts[0]["messages"]) == 2
+        assert prompts[0]["messages"][0]["role"] == "system"
+
+    def test_empty_messages_list(self, tmp_path):
+        """Test that empty messages list raises ValueError."""
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  messages: []
+"""
+        )
+        with pytest.raises(ValueError):
+            load_prompts(str(prompts_file))
+
+    def test_invalid_message_format(self, tmp_path):
+        """Test that invalid message format raises ValueError."""
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  messages:
+    - role: user
+"""
+        )
+        with pytest.raises(ValueError):
+            load_prompts(str(prompts_file))
+
+    def test_invalid_message_role(self, tmp_path):
+        """Test that invalid message role raises ValueError."""
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  messages:
+    - role: invalid_role
+      content: "Hello"
+"""
+        )
         with pytest.raises(ValueError):
             load_prompts(str(prompts_file))
 

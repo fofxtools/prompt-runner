@@ -3,6 +3,8 @@
 # - prompt: string or block
 # - options: optional, passed verbatim to ollama
 
+# --- Completion-style prompts ---
+
 - id: little_red_riding_hood
   prompt: Write a modern version of Little Red Riding Hood.
 
@@ -14,3 +16,19 @@
 
 - id: electromagnetism
   prompt: Explain electromagnetism to a high schooler.
+
+# --- Chat-style prompts ---
+
+- id: helpful_storyteller_chat
+  messages:
+    - role: system
+      content: You are a helpful and imaginative storyteller.
+    - role: user
+      content: Write a short original fairy tale set in a modern city.
+
+- id: science_tutor_chat
+  messages:
+    - role: system
+      content: You are a friendly science tutor who explains concepts clearly and simply.
+    - role: user
+      content: Explain how gravity works in a way a curious 12-year-old would understand.
