@@ -2,47 +2,47 @@
 # Each model specifies the diffusion model and required text encoders/VAE
 
 - name: flux1-schnell-Q5_K_S
-  diffusion_model_path: ${HOME}/ai/diffusion/gguf/flux1-schnell-Q5_K_S.gguf
-  clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
-  t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp16.safetensors
-  vae_path: ${HOME}/ai/vae/ae.safetensors
   options:
+    diffusion_model_path: ${HOME}/ai/diffusion/gguf/flux1-schnell-Q5_K_S.gguf
+    clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
+    t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp16.safetensors
+    vae_path: ${HOME}/ai/vae/ae.safetensors
     keep_clip_on_cpu: true
     cfg_scale: 1.0
     sample_steps: 6
 
 - name: v1-5-pruned-emaonly
-  model_path: ${HOME}/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors
   options:
+    model_path: ${HOME}/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors
     sample_steps: 20
 
 - name: sd3.5_large_turbo-Q5_1
-  diffusion_model_path: ${HOME}/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
-  clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
-  clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
-  t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp8_e4m3fn.safetensors
-  vae_path: ${HOME}/ai/vae/diffusion_pytorch_model.safetensors
   options:
+    diffusion_model_path: ${HOME}/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
+    clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
+    clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
+    t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp8_e4m3fn.safetensors
+    vae_path: ${HOME}/ai/vae/diffusion_pytorch_model.safetensors
     keep_clip_on_cpu: true
     cfg_scale: 4.0
     sample_steps: 9
 
 - name: sd3.5_medium
-  diffusion_model_path: ${HOME}/ai/diffusion/gguf/sd3.5_medium.safetensors
-  clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
-  clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
-  t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp16.safetensors
-  vae_path: ${HOME}/ai/vae/diffusion_pytorch_model.safetensors
   options:
+    diffusion_model_path: ${HOME}/ai/diffusion/gguf/sd3.5_medium.safetensors
+    clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
+    clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
+    t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp16.safetensors
+    vae_path: ${HOME}/ai/vae/diffusion_pytorch_model.safetensors
     keep_clip_on_cpu: true
     cfg_scale: 4.5
     sample_steps: 20
 
 - name: z_image_turbo-Q5_K_M
-  diffusion_model_path: ${HOME}/ai/diffusion/gguf/z_image_turbo-Q5_K_M.gguf
-  llm_path: ${HOME}/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-  vae_path: ${HOME}/ai/vae/ae.safetensors
   options:
+    diffusion_model_path: ${HOME}/ai/diffusion/gguf/z_image_turbo-Q5_K_M.gguf
+    llm_path: ${HOME}/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
+    vae_path: ${HOME}/ai/vae/ae.safetensors
     keep_clip_on_cpu: true
     cfg_scale: 1.0
     sample_steps: 9

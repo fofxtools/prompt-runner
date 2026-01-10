@@ -31,3 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 prompt_runner = ["py.typed"]
+
+[[tool.mypy.overrides]]
+module = "stable_diffusion_cpp.*"
+ignore_missing_imports = true
