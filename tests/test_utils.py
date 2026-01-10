@@ -3,7 +3,9 @@
 import pytest
 from prompt_runner.utils import (
     create_result_structure,
+    expand_env_vars,
     generate_run_identifiers,
+    merge_image_options,
     merge_options,
     sanitize_fs_name,
 )
@@ -184,3 +186,75 @@ class TestMergeOptions:
         assert result["temperature"] == 0.9  # Overridden by prompt
         assert result["num_predict"] == 100  # From model
         assert result["top_p"] == 0.95  # From prompt
+
+
+class TestExpandEnvVars:
+    """Tests for expand_env_vars function."""
+
+    # Use monkeypatch to set environment variables for tests to avoid environment pollution
+    def test_expand_string_with_env_var(self, monkeypatch):
+        """Test expanding environment variable in a string."""
+        monkeypatch.setenv("TEST_VAR", "/test/path")
+        result = expand_env_vars("${TEST_VAR}/models")
+        assert result == "/test/path/models"
+
+    def test_expand_dict_with_env_vars(self, monkeypatch):
+        """Test expanding environment variables in a dictionary."""
+        monkeypatch.setenv("TEST_HOME", "/home/user")
+        input_dict = {"path": "${TEST_HOME}/models", "name": "test"}
+        result = expand_env_vars(input_dict)
+        assert result == {"path": "/home/user/models", "name": "test"}
+
+    def test_expand_list_with_env_vars(self, monkeypatch):
+        """Test expanding environment variables in a list."""
+        monkeypatch.setenv("TEST_DIR", "/data")
+        input_list = ["${TEST_DIR}/a", "${TEST_DIR}/b"]
+        result = expand_env_vars(input_list)
+        assert result == ["/data/a", "/data/b"]
+
+    def test_nested_structures(self, monkeypatch):
+        """Test expanding environment variables in nested structures."""
+        monkeypatch.setenv("BASE", "/base")
+        input_data = {
+            "paths": ["${BASE}/path1", "${BASE}/path2"],
+            "config": {"root": "${BASE}/config"},
+        }
+        result = expand_env_vars(input_data)
+        assert result == {
+            "paths": ["/base/path1", "/base/path2"],
+            "config": {"root": "/base/config"},
+        }
+
+    def test_non_string_values_unchanged(self):
+        """Test that non-string values are returned unchanged."""
+        assert expand_env_vars(42) == 42
+        assert expand_env_vars(3.14) == 3.14
+        assert expand_env_vars(True) is True
+        assert expand_env_vars(None) is None
+
+
+class TestMergeImageOptions:
+    """Tests for merge_image_options function."""
+
+    def test_all_none(self):
+        """Test that empty dict is returned when all are None."""
+        result = merge_image_options(None, None, None)
+        assert result == {}
+
+    def test_global_only(self):
+        """Test that global defaults are returned when others are None."""
+        global_opts = {"width": 512, "height": 512}
+        result = merge_image_options(global_opts, None, None)
+        assert result == {"width": 512, "height": 512}
+
+    def test_prompt_overrides_all(self):
+        """Test that prompt options override both global and model options."""
+        global_opts = {"width": 512, "cfg_scale": 7.0}
+        model_opts = {"cfg_scale": 1.0, "sample_steps": 6}
+        prompt_opts = {"seed": 42, "cfg_scale": 3.5}
+        result = merge_image_options(global_opts, model_opts, prompt_opts)
+
+        assert result["width"] == 512  # From global
+        assert result["sample_steps"] == 6  # From model
+        assert result["cfg_scale"] == 3.5  # Overridden by prompt
+        assert result["seed"] == 42  # From prompt

@@ -1,5 +1,6 @@
 """Utility functions for the evals project."""
 
+import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -110,6 +111,84 @@ def merge_options(
 
     Returns:
         Merged options dictionary (passed verbatim to ollama)
+    """
+    merged = {}
+
+    if global_defaults:
+        merged.update(global_defaults)
+
+    if model_options:
+        merged.update(model_options)
+
+    if prompt_options:
+        merged.update(prompt_options)
+
+    return merged
+
+
+def expand_env_vars(value: Any) -> Any:
+    """
+    Recursively expand environment variables in strings, dicts, and lists.
+
+    Expands ${VAR_NAME} patterns in strings using os.path.expandvars().
+    Recursively processes dictionaries and lists.
+
+    Args:
+        value: The value to process (can be str, dict, list, or other types)
+
+    Returns:
+        The value with environment variables expanded
+
+    Examples:
+        >>> os.environ['HOME'] = '/home/user'
+        >>> expand_env_vars('${HOME}/models')
+        '/home/user/models'
+        >>> expand_env_vars({'path': '${HOME}/models', 'name': 'test'})
+        {'path': '/home/user/models', 'name': 'test'}
+        >>> expand_env_vars(['${HOME}/a', '${HOME}/b'])
+        ['/home/user/a', '/home/user/b']
+    """
+    if isinstance(value, str):
+        return os.path.expandvars(value)
+    elif isinstance(value, dict):
+        return {k: expand_env_vars(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [expand_env_vars(item) for item in value]
+    else:
+        return value
+
+
+def merge_image_options(
+    global_defaults: Dict[str, Any] | None,
+    model_options: Dict[str, Any] | None,
+    prompt_options: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """
+    Merge global defaults, model-level and prompt-level options for image generation.
+
+    Priority (lowest to highest):
+    1. Global defaults from config.yaml (image_generation_defaults)
+    2. Model-level generation options (passed verbatim)
+    3. Prompt-level options (overwrite on conflict)
+
+    Note: This function blindly merges generation options.
+    Init-only options (e.g. vae_decode_only, keep_clip_on_cpu)
+    are applied at model initialization time and cannot be
+    changed per generation call.
+
+    Args:
+        global_defaults: Global image generation defaults from config (can be None)
+        model_options: Generation options from the model configuration (can be None)
+        prompt_options: Options from the prompt configuration (can be None)
+
+    Returns:
+        Merged options dictionary for image generation
+
+    Examples:
+        >>> merge_image_options({'width': 512}, {'cfg_scale': 1.0}, {'seed': 42})
+        {'width': 512, 'cfg_scale': 1.0, 'seed': 42}
+        >>> merge_image_options({'width': 512}, {'width': 1024}, None)
+        {'width': 1024}
     """
     merged = {}
 

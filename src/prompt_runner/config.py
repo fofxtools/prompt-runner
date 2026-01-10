@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 
 import yaml
 
+from .utils import expand_env_vars
+
 
 def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
     """
@@ -195,3 +197,148 @@ def load_llm_models(
             )
 
     return models
+
+
+def load_image_models(
+    models_path: str = "config/image_models.yaml",
+) -> List[Dict[str, Any]]:
+    """
+    Load and validate image models from the models configuration file.
+
+    The file must contain a YAML list where each model has:
+    - name: the model identifier
+    - Path parameters (at least one): model_path, diffusion_model_path, clip_l_path,
+      clip_g_path, t5xxl_path, llm_path, vae_path
+    - options: (optional) dict of init and generation options
+
+    Environment variables in path fields are expanded using expand_env_vars().
+
+    Args:
+        models_path: Path to the image_models.yaml file (default: config/image_models.yaml)
+
+    Returns:
+        List of model dictionaries with expanded environment variables
+
+    Raises:
+        FileNotFoundError: If the models file doesn't exist
+        yaml.YAMLError: If the YAML is invalid
+        ValueError: If model validation fails
+    """
+    models_file = Path(models_path)
+
+    if not models_file.exists():
+        raise FileNotFoundError(f"Models file not found: {models_path}")
+
+    with open(models_file, "r") as f:
+        models = yaml.safe_load(f)
+
+    if not isinstance(models, list):
+        raise ValueError("Models file must contain a YAML list")
+
+    # Validate each model
+    for i, model in enumerate(models):
+        if not isinstance(model, dict):
+            raise ValueError(f"Model at index {i} must be a dictionary")
+
+        if "name" not in model:
+            raise ValueError(f"Model at index {i} missing required 'name' field")
+
+        if "options" in model and not isinstance(model["options"], dict):
+            raise ValueError(
+                f"Model '{model.get('name', i)}' field 'options' must be a dictionary"
+            )
+
+    # Expand environment variables in all models
+    models = expand_env_vars(models)
+
+    return models
+
+
+def load_image_prompts(
+    prompts_path: str = "config/image_prompts.yaml",
+) -> List[Dict[str, Any]]:
+    """
+    Load and validate image prompts from the prompts configuration file.
+
+    Each prompt must have:
+    - id: string matching regex ^[a-z0-9_]+$
+    - mode: "txt2img" or "img2img"
+    - prompt: the prompt text
+
+    Optional fields:
+    - negative_prompt: negative prompt text
+    - init_image: path to input image (required for img2img)
+    - strength: float for img2img (0.0-1.0)
+    - options: dict of generation options
+    - n: number of images to generate (default: 1)
+
+    Args:
+        prompts_path: Path to the image_prompts.yaml file (default: config/image_prompts.yaml)
+
+    Returns:
+        List of prompt dictionaries
+
+    Raises:
+        FileNotFoundError: If the prompts file doesn't exist
+        yaml.YAMLError: If the YAML is invalid
+        ValueError: If prompt validation fails
+    """
+    prompts_file = Path(prompts_path)
+
+    if not prompts_file.exists():
+        raise FileNotFoundError(f"Prompts file not found: {prompts_path}")
+
+    with open(prompts_file, "r") as f:
+        prompts = yaml.safe_load(f)
+
+    if not isinstance(prompts, list):
+        raise ValueError("Prompts file must contain a YAML list")
+
+    # Validate prompt IDs and mode
+    prompt_id_pattern = re.compile(r"^[a-z0-9_]+$")
+    seen_ids = set()
+
+    for i, prompt in enumerate(prompts):
+        if not isinstance(prompt, dict):
+            raise ValueError(f"Prompt at index {i} must be a dictionary")
+
+        if "id" not in prompt:
+            raise ValueError(f"Prompt at index {i} missing required 'id' field")
+
+        prompt_id = prompt["id"]
+
+        # Validate ID format
+        if not prompt_id_pattern.match(prompt_id):
+            raise ValueError(
+                f"Prompt ID '{prompt_id}' is invalid. "
+                f"Must match pattern: ^[a-z0-9_]+$"
+            )
+
+        # Check for duplicates
+        if prompt_id in seen_ids:
+            raise ValueError(f"Duplicate prompt ID found: '{prompt_id}'")
+
+        seen_ids.add(prompt_id)
+
+        # Validate mode
+        if "mode" not in prompt:
+            raise ValueError(f"Prompt '{prompt_id}' missing required 'mode' field")
+
+        mode = prompt["mode"]
+        if mode not in ("txt2img", "img2img"):
+            raise ValueError(
+                f"Prompt '{prompt_id}' has invalid mode '{mode}'. "
+                f"Must be 'txt2img' or 'img2img'"
+            )
+
+        # Validate prompt field
+        if "prompt" not in prompt:
+            raise ValueError(f"Prompt '{prompt_id}' missing required 'prompt' field")
+
+        # Validate options if present
+        if "options" in prompt and not isinstance(prompt["options"], dict):
+            raise ValueError(
+                f"Prompt '{prompt_id}' field 'options' must be a dictionary"
+            )
+
+    return prompts

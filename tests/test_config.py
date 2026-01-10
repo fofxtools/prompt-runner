@@ -1,7 +1,13 @@
 """Unit tests for src/config.py"""
 
 import pytest
-from prompt_runner.config import load_config, load_llm_prompts, load_llm_models
+from prompt_runner.config import (
+    load_config,
+    load_image_models,
+    load_image_prompts,
+    load_llm_prompts,
+    load_llm_models,
+)
 
 
 class TestLoadConfig:
@@ -194,3 +200,145 @@ class TestLoadModels:
         models_file.write_text("- options:\n    temperature: 0.7\n")
         with pytest.raises(ValueError):
             load_llm_models(str(models_file))
+
+
+class TestLoadImageModels:
+    """Tests for load_image_models function."""
+
+    def test_load_valid_models(self, tmp_path, monkeypatch):
+        """Test loading valid image models with environment variable expansion."""
+        monkeypatch.setenv("TEST_HOME", "/home/user")
+        models_file = tmp_path / "image_models.yaml"
+        models_file.write_text(
+            """
+- name: flux1-schnell
+  diffusion_model_path: ${TEST_HOME}/models/flux.gguf
+  clip_l_path: ${TEST_HOME}/encoders/clip_l.safetensors
+  options:
+    cfg_scale: 1.0
+    sample_steps: 6
+- name: sd15
+  model_path: ${TEST_HOME}/models/sd15.safetensors
+"""
+        )
+        models = load_image_models(str(models_file))
+        assert len(models) == 2
+        assert models[0]["name"] == "flux1-schnell"
+        assert models[0]["diffusion_model_path"] == "/home/user/models/flux.gguf"
+        assert models[0]["clip_l_path"] == "/home/user/encoders/clip_l.safetensors"
+        assert models[0]["options"]["cfg_scale"] == 1.0
+        assert models[1]["name"] == "sd15"
+        assert models[1]["model_path"] == "/home/user/models/sd15.safetensors"
+
+    def test_missing_file(self):
+        """Test that missing file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            load_image_models("nonexistent.yaml")
+
+    def test_missing_name_field(self, tmp_path):
+        """Test that missing name field raises ValueError."""
+        models_file = tmp_path / "image_models.yaml"
+        models_file.write_text("- model_path: /path/to/model\n")
+        with pytest.raises(ValueError):
+            load_image_models(str(models_file))
+
+
+class TestLoadImagePrompts:
+    """Tests for load_image_prompts function."""
+
+    def test_load_valid_prompts(self, tmp_path):
+        """Test loading valid image prompts."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: cute_cat_txt2img
+  mode: txt2img
+  prompt: A cute fluffy cat
+- id: cat_img2img
+  mode: img2img
+  prompt: A refined cat image
+  init_image: assets/input/cat.jpg
+  strength: 0.7
+  options:
+    seed: 42
+"""
+        )
+        prompts = load_image_prompts(str(prompts_file))
+        assert len(prompts) == 2
+        assert prompts[0]["id"] == "cute_cat_txt2img"
+        assert prompts[0]["mode"] == "txt2img"
+        assert prompts[0]["prompt"] == "A cute fluffy cat"
+        assert prompts[1]["id"] == "cat_img2img"
+        assert prompts[1]["mode"] == "img2img"
+        assert prompts[1]["strength"] == 0.7
+
+    def test_missing_file(self):
+        """Test that missing file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            load_image_prompts("nonexistent.yaml")
+
+    def test_invalid_prompt_id(self, tmp_path):
+        """Test that invalid prompt ID raises ValueError."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: Invalid-ID
+  mode: txt2img
+  prompt: test
+"""
+        )
+        with pytest.raises(ValueError):
+            load_image_prompts(str(prompts_file))
+
+    def test_duplicate_prompt_id(self, tmp_path):
+        """Test that duplicate IDs raise ValueError."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  mode: txt2img
+  prompt: first
+- id: test_id
+  mode: txt2img
+  prompt: second
+"""
+        )
+        with pytest.raises(ValueError):
+            load_image_prompts(str(prompts_file))
+
+    def test_missing_mode_field(self, tmp_path):
+        """Test that missing mode field raises ValueError."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  prompt: test
+"""
+        )
+        with pytest.raises(ValueError):
+            load_image_prompts(str(prompts_file))
+
+    def test_invalid_mode(self, tmp_path):
+        """Test that invalid mode raises ValueError."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  mode: invalid_mode
+  prompt: test
+"""
+        )
+        with pytest.raises(ValueError):
+            load_image_prompts(str(prompts_file))
+
+    def test_missing_prompt_field(self, tmp_path):
+        """Test that missing prompt field raises ValueError."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(
+            """
+- id: test_id
+  mode: txt2img
+"""
+        )
+        with pytest.raises(ValueError):
+            load_image_prompts(str(prompts_file))

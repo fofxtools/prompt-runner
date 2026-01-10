@@ -1,0 +1,56 @@
+# Each image prompt must have:
+# - id: lowercase alphanumeric + underscore only
+# - mode: txt2img | img2img
+# - prompt: string or block
+#
+# Optional fields:
+# - negative_prompt: string or block
+# - init_image: path (required for img2img)
+# - strength: float (img2img only, 0.0–1.0, default: 0.5)
+# - options: overrides image_generation_defaults and model options
+# - n: number of images to generate (default: 1)
+
+# ============================================================
+# TXT2IMG PROMPTS
+# ============================================================
+
+- id: cute_cat_txt2img
+  mode: txt2img
+  prompt: A cute fluffy cat sitting on a windowsill, soft daylight, cozy atmosphere.
+
+- id: cyberpunk_city_txt2img
+  mode: txt2img
+  prompt: |
+    A futuristic cyberpunk city at night with neon lights,
+    rain-soaked streets, flying cars, cinematic lighting.
+
+- id: fantasy_knight_txt2img
+  mode: txt2img
+  prompt: A heroic medieval knight standing in a sunlit field, epic fantasy art.
+  negative_prompt: |
+    blurry, low resolution, extra limbs, distorted anatomy
+
+- id: character_variations_txt2img
+  mode: txt2img
+  prompt: A young wizard with a staff, fantasy character concept art.
+  n: 4
+
+# ============================================================
+# IMG2IMG PROMPTS
+# ============================================================
+
+- id: cat_refinement_img2img
+  mode: img2img
+  prompt: A cute fluffy cat with more detailed fur and realistic lighting.
+  init_image: assets/input/cat.jpg
+  strength: 0.7
+
+- id: portrait_style_transfer_img2img
+  mode: img2img
+  prompt: |
+    A photorealistic studio portrait with natural skin texture,
+    soft dramatic lighting, shallow depth of field.
+  negative_prompt: |
+    cartoon, illustration, plastic skin, oversharpened
+  init_image: assets/input/mona_lisa.jpg
+  strength: 0.7

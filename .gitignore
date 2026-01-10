@@ -120,3 +120,6 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# Python packaging metadata
+*.egg-info/

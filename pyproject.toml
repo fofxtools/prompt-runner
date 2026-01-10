@@ -10,12 +10,14 @@ requires-python = ">=3.10"
 dependencies = [
     "ollama",
     "pyyaml",
+    "stable-diffusion-cpp-python",
 ]
 
 [project.optional-dependencies]
 dev = [
     "black",
     "mypy",
+    "pillow",
     "pytest",
     "ruff",
     "types-PyYAML",

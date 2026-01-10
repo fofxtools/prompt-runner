@@ -1,9 +1,0 @@
-ollama
-pyyaml
-
-[dev]
-black
-mypy
-pytest
-ruff
-types-PyYAML
