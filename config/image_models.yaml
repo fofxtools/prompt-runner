@@ -1,48 +1,85 @@
 # Image generation models configuration
 # Each model specifies the diffusion model and required text encoders/VAE
+#
+# init_options: Initialization parameters for StableDiffusion.__init__()
+#   - Paths: diffusion_model_path, model_path, clip_l_path, t5xxl_path, vae_path, etc.
+#   - Init flags: keep_clip_on_cpu, vae_decode_only, etc.
+#
+# generation_options: Default generation parameters for this model
+#   - cfg_scale, sample_steps, width, height, etc.
+#   - These are merged with global defaults and prompt options
 
 - name: flux1-schnell-Q5_K_S
-  options:
+  init_options:
     diffusion_model_path: ${HOME}/ai/diffusion/gguf/flux1-schnell-Q5_K_S.gguf
     clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
     t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp16.safetensors
     vae_path: ${HOME}/ai/vae/ae.safetensors
     keep_clip_on_cpu: true
+  generation_options:
     cfg_scale: 1.0
     sample_steps: 6
 
 - name: v1-5-pruned-emaonly
-  options:
+  init_options:
     model_path: ${HOME}/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors
+  generation_options:
     sample_steps: 20
 
 - name: sd3.5_large_turbo-Q5_1
-  options:
+  init_options:
     diffusion_model_path: ${HOME}/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
     clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
     clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
     t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp8_e4m3fn.safetensors
     vae_path: ${HOME}/ai/vae/diffusion_pytorch_model.safetensors
     keep_clip_on_cpu: true
-    cfg_scale: 4.0
-    sample_steps: 9
+  generation_options:
+    cfg_scale: 1.0
+    sample_steps: 6
 
 - name: sd3.5_medium
-  options:
-    diffusion_model_path: ${HOME}/ai/diffusion/gguf/sd3.5_medium.safetensors
+  init_options:
+    diffusion_model_path: ${HOME}/ai/diffusion/checkpoints/sd3.5_medium.safetensors
     clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
     clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
     t5xxl_path: ${HOME}/ai/text_encoders/t5xxl_fp16.safetensors
     vae_path: ${HOME}/ai/vae/diffusion_pytorch_model.safetensors
     keep_clip_on_cpu: true
+  generation_options:
     cfg_scale: 4.5
     sample_steps: 20
 
+- name: sd_xl_base_1.0.safetensors
+  init_options:
+    model_path: ${HOME}/ai/diffusion/checkpoints/sd_xl_base_1.0.safetensors
+    clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
+    clip_g_path: ${HOME}/ai/text_encoders/clip_g.safetensors
+    vae_path: ${HOME}/ai/vae/sdxl.vae.safetensors
+    keep_clip_on_cpu: true
+  generation_options:
+    width: 1024
+    height: 1024
+    cfg_scale: 6.0
+    sample_steps: 25
+
 - name: z_image_turbo-Q5_K_M
-  options:
+  init_options:
     diffusion_model_path: ${HOME}/ai/diffusion/gguf/z_image_turbo-Q5_K_M.gguf
     llm_path: ${HOME}/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
     vae_path: ${HOME}/ai/vae/ae.safetensors
     keep_clip_on_cpu: true
+  generation_options:
     cfg_scale: 1.0
     sample_steps: 9
+
+- name: flux1-dev-Q5_1.gguf
+  init_options:
+    diffusion_model_path: ${HOME}/ai/diffusion/gguf/flux1-dev-Q5_1.gguf
+    clip_l_path: ${HOME}/ai/text_encoders/clip_l.safetensors
+    t5xxl_path: ${HOME}/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
+    vae_path: ${HOME}/ai/vae/ae.safetensors
+    keep_clip_on_cpu: true
+  generation_options:
+    cfg_scale: 1.0
+    sample_steps: 20

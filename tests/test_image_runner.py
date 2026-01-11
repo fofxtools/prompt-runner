@@ -8,6 +8,7 @@ from PIL import Image
 from prompt_runner.image_runner import (
     generate_image,
     initialize_stable_diffusion,
+    run_image_eval,
     save_image_summary,
 )
 
@@ -75,14 +76,14 @@ class TestInitializeStableDiffusion:
     """Tests for initialize_stable_diffusion function."""
 
     @patch("prompt_runner.image_runner.StableDiffusion")
-    def test_passes_all_options_to_stable_diffusion(self, mock_sd_class):
-        """Test that all options are passed to StableDiffusion."""
+    def test_passes_all_init_options_to_stable_diffusion(self, mock_sd_class):
+        """Test that all init_options are passed to StableDiffusion."""
         mock_instance = MagicMock()
         mock_sd_class.return_value = mock_instance
 
         model_config = {
             "name": "test-model",
-            "options": {
+            "init_options": {
                 "model_path": "/path/to/model.safetensors",
                 "diffusion_model_path": "/path/to/diffusion.gguf",
                 "clip_l_path": "/path/to/clip_l.safetensors",
@@ -91,13 +92,15 @@ class TestInitializeStableDiffusion:
                 "llm_path": "/path/to/llm.gguf",
                 "vae_path": "/path/to/vae.safetensors",
                 "keep_clip_on_cpu": True,
+            },
+            "generation_options": {
                 "cfg_scale": 1.0,
             },
         }
 
         result = initialize_stable_diffusion(model_config)
 
-        # Should pass all options
+        # Should pass only init_options (not generation_options)
         mock_sd_class.assert_called_once_with(
             model_path="/path/to/model.safetensors",
             diffusion_model_path="/path/to/diffusion.gguf",
@@ -107,22 +110,23 @@ class TestInitializeStableDiffusion:
             llm_path="/path/to/llm.gguf",
             vae_path="/path/to/vae.safetensors",
             keep_clip_on_cpu=True,
-            cfg_scale=1.0,
         )
         assert result == mock_instance
 
     @patch("prompt_runner.image_runner.StableDiffusion")
-    def test_passes_all_options_verbatim(self, mock_sd_class):
-        """Test that all options are passed through as-is."""
+    def test_passes_init_options_verbatim(self, mock_sd_class):
+        """Test that all init_options are passed through as-is."""
         mock_instance = MagicMock()
         mock_sd_class.return_value = mock_instance
 
         model_config = {
             "name": "flux1-schnell",
-            "options": {
+            "init_options": {
                 "diffusion_model_path": "/path/to/model.gguf",
                 "vae_decode_only": True,
                 "keep_clip_on_cpu": True,
+            },
+            "generation_options": {
                 "cfg_scale": 1.0,
                 "sample_steps": 6,
             },
@@ -130,23 +134,21 @@ class TestInitializeStableDiffusion:
 
         result = initialize_stable_diffusion(model_config)
 
-        # Should pass all options (StableDiffusion will validate)
+        # Should pass only init_options (StableDiffusion will validate)
         mock_sd_class.assert_called_once_with(
             diffusion_model_path="/path/to/model.gguf",
             vae_decode_only=True,
             keep_clip_on_cpu=True,
-            cfg_scale=1.0,
-            sample_steps=6,
         )
         assert result == mock_instance
 
-    def test_raises_if_options_missing(self):
-        """Test that ValueError is raised if options field is missing."""
+    def test_raises_if_init_options_missing(self):
+        """Test that ValueError is raised if init_options field is missing."""
         model_config = {
             "name": "sd15",
         }
 
-        with pytest.raises(ValueError, match="missing 'options' field"):
+        with pytest.raises(ValueError, match="missing 'init_options' field"):
             initialize_stable_diffusion(model_config)
 
 
@@ -279,3 +281,170 @@ class TestGenerateImage:
         assert "id" not in call_kwargs
         assert "mode" not in call_kwargs
         assert "options" not in call_kwargs
+
+
+class TestRunImageEval:
+    """Tests for run_image_eval function."""
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_txt2img_metadata_structure(self, mock_generate, mock_init_sd, tmp_path):
+        """Test that txt2img JSON metadata has correct structure."""
+        # Setup mocks
+        mock_sd = MagicMock()
+        mock_init_sd.return_value = mock_sd
+        mock_image = Image.new("RGB", (512, 512), color="red")
+        mock_generate.return_value = [mock_image]
+
+        # Config
+        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+        prompts = [
+            {
+                "id": "test_txt2img",
+                "mode": "txt2img",
+                "options": {"prompt": "A cute cat"},
+            }
+        ]
+        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+
+        # Run
+        run_id = run_image_eval(config, prompts, models, mode_filter="txt2img")
+
+        # Verify JSON metadata
+        json_files = list(tmp_path.glob("**/json/*.json"))
+        assert len(json_files) == 1
+
+        with open(json_files[0], "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        # Check structure
+        assert metadata["run_id"] == run_id
+        assert metadata["mode"] == "txt2img"
+        assert metadata["model"]["name"] == "test-model"
+        assert metadata["prompt"]["id"] == "test_txt2img"
+        assert metadata["generation_options"]["prompt"] == "A cute cat"
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_img2img_metadata_structure(self, mock_generate, mock_init_sd, tmp_path):
+        """Test that img2img JSON metadata has correct structure."""
+        # Setup mocks
+        mock_sd = MagicMock()
+        mock_init_sd.return_value = mock_sd
+        mock_image = Image.new("RGB", (512, 512), color="blue")
+        mock_generate.return_value = [mock_image]
+
+        # Config
+        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+        prompts = [
+            {
+                "id": "test_img2img",
+                "mode": "img2img",
+                "options": {
+                    "prompt": "Enhanced cat",
+                    "negative_prompt": "blurry",
+                    "init_image": "/path/to/cat.jpg",
+                    "strength": 0.7,
+                },
+            }
+        ]
+        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+
+        # Run
+        run_image_eval(config, prompts, models, mode_filter="img2img")
+
+        # Verify JSON metadata
+        json_files = list(tmp_path.glob("**/json/*.json"))
+        assert len(json_files) == 1
+
+        with open(json_files[0], "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        # Check all fields are in generation_options
+        assert metadata["generation_options"]["prompt"] == "Enhanced cat"
+        assert metadata["generation_options"]["negative_prompt"] == "blurry"
+        assert metadata["generation_options"]["init_image"] == "/path/to/cat.jpg"
+        assert metadata["generation_options"]["strength"] == 0.7
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_mode_filter_txt2img(self, mock_generate, mock_init_sd, tmp_path):
+        """Test that mode_filter='txt2img' only processes txt2img prompts."""
+        # Setup mocks
+        mock_sd = MagicMock()
+        mock_init_sd.return_value = mock_sd
+        mock_image = Image.new("RGB", (512, 512), color="green")
+        mock_generate.return_value = [mock_image]
+
+        # Config with mixed prompts
+        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+        prompts = [
+            {"id": "txt2img_1", "mode": "txt2img", "options": {"prompt": "Cat"}},
+            {
+                "id": "img2img_1",
+                "mode": "img2img",
+                "options": {
+                    "prompt": "Dog",
+                    "init_image": "/test.jpg",
+                    "strength": 0.5,
+                },
+            },
+            {"id": "txt2img_2", "mode": "txt2img", "options": {"prompt": "Bird"}},
+        ]
+        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+
+        # Run with txt2img filter
+        run_image_eval(config, prompts, models, mode_filter="txt2img")
+
+        # Should only generate 2 images (txt2img only)
+        assert mock_generate.call_count == 2
+
+        # Verify only txt2img directories exist
+        prompt_dirs = list(tmp_path.glob("**/image/*"))
+        prompt_ids = [d.name for d in prompt_dirs]
+        assert "txt2img_1" in prompt_ids
+        assert "txt2img_2" in prompt_ids
+        assert "img2img_1" not in prompt_ids
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_mode_filter_all(self, mock_generate, mock_init_sd, tmp_path):
+        """Test that mode_filter='all' processes all prompts."""
+        # Setup mocks
+        mock_sd = MagicMock()
+        mock_init_sd.return_value = mock_sd
+        mock_image = Image.new("RGB", (512, 512), color="yellow")
+        mock_generate.return_value = [mock_image]
+
+        # Config with mixed prompts
+        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+        prompts = [
+            {"id": "txt2img_1", "mode": "txt2img", "options": {"prompt": "Cat"}},
+            {
+                "id": "img2img_1",
+                "mode": "img2img",
+                "options": {
+                    "prompt": "Dog",
+                    "init_image": "/test.jpg",
+                    "strength": 0.5,
+                },
+            },
+        ]
+        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+
+        # Run with 'all' filter
+        run_image_eval(config, prompts, models, mode_filter="all")
+
+        # Should generate both images
+        assert mock_generate.call_count == 2
+
+    def test_invalid_mode_filter_raises_error(self, tmp_path):
+        """Test that invalid mode_filter raises ValueError."""
+        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+        prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
+        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+
+        with pytest.raises(
+            ValueError, match="Invalid mode_filter: invalid. Must be 'txt2img'"
+        ):
+            run_image_eval(config, prompts, models, mode_filter="invalid")

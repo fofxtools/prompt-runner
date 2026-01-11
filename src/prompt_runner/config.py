@@ -207,11 +207,13 @@ def load_image_models(
 
     The file must contain a YAML list where each model has:
     - name: the model identifier
-    - options: dict containing all StableDiffusion initialization parameters
+    - init_options: dict containing all StableDiffusion initialization parameters
       (diffusion_model_path, model_path, clip_l_path, clip_g_path, t5xxl_path,
-      llm_path, vae_path, keep_clip_on_cpu, cfg_scale, sample_steps, etc.)
+      llm_path, vae_path, keep_clip_on_cpu, vae_decode_only, etc.)
+    - generation_options: (optional) dict containing default generation parameters
+      (cfg_scale, sample_steps, width, height, etc.)
 
-    Environment variables in path fields are expanded using expand_env_vars().
+    Environment variables and ~ in path fields are expanded using expand_path_fields().
 
     Args:
         models_path: Path to the image_models.yaml file (default: config/image_models.yaml)
@@ -243,19 +245,29 @@ def load_image_models(
         if "name" not in model:
             raise ValueError(f"Model at index {i} missing required 'name' field")
 
-        # Validate options field (required)
-        if "options" not in model:
-            raise ValueError(f"Model at index {i} missing required 'options' field")
-
-        if not isinstance(model["options"], dict):
+        # Validate init_options field (required)
+        if "init_options" not in model:
             raise ValueError(
-                f"Model '{model.get('name', i)}' field 'options' must be a dictionary"
+                f"Model at index {i} missing required 'init_options' field"
+            )
+
+        if not isinstance(model["init_options"], dict):
+            raise ValueError(
+                f"Model '{model.get('name', i)}' field 'init_options' must be a dictionary"
+            )
+
+        # Validate generation_options field (optional)
+        if "generation_options" in model and not isinstance(
+            model["generation_options"], dict
+        ):
+            raise ValueError(
+                f"Model '{model.get('name', i)}' field 'generation_options' must be a dictionary"
             )
 
     # Expand environment variables in path fields only
     # (fields ending with '_path')
     for model in models:
-        model["options"] = expand_path_fields(model["options"])
+        model["init_options"] = expand_path_fields(model["init_options"])
 
     return models
 

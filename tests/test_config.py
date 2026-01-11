@@ -212,13 +212,14 @@ class TestLoadImageModels:
         models_file.write_text(
             """
 - name: flux1-schnell
-  options:
+  init_options:
     diffusion_model_path: ${TEST_HOME}/models/flux.gguf
     clip_l_path: ${TEST_HOME}/encoders/clip_l.safetensors
+  generation_options:
     cfg_scale: 1.0
     sample_steps: 6
 - name: sd15
-  options:
+  init_options:
     model_path: ${TEST_HOME}/models/sd15.safetensors
 """
         )
@@ -226,17 +227,18 @@ class TestLoadImageModels:
         assert len(models) == 2
         assert models[0]["name"] == "flux1-schnell"
         assert (
-            models[0]["options"]["diffusion_model_path"]
+            models[0]["init_options"]["diffusion_model_path"]
             == "/home/user/models/flux.gguf"
         )
         assert (
-            models[0]["options"]["clip_l_path"]
+            models[0]["init_options"]["clip_l_path"]
             == "/home/user/encoders/clip_l.safetensors"
         )
-        assert models[0]["options"]["cfg_scale"] == 1.0
+        assert models[0]["generation_options"]["cfg_scale"] == 1.0
         assert models[1]["name"] == "sd15"
         assert (
-            models[1]["options"]["model_path"] == "/home/user/models/sd15.safetensors"
+            models[1]["init_options"]["model_path"]
+            == "/home/user/models/sd15.safetensors"
         )
 
     def test_missing_file(self):
@@ -249,18 +251,18 @@ class TestLoadImageModels:
         models_file = tmp_path / "image_models.yaml"
         models_file.write_text(
             """
-- options:
+- init_options:
     model_path: /path/to/model
 """
         )
         with pytest.raises(ValueError, match="missing required 'name' field"):
             load_image_models(str(models_file))
 
-    def test_missing_options_field(self, tmp_path):
-        """Test that missing options field raises ValueError."""
+    def test_missing_init_options_field(self, tmp_path):
+        """Test that missing init_options field raises ValueError."""
         models_file = tmp_path / "image_models.yaml"
         models_file.write_text("- name: test-model\n")
-        with pytest.raises(ValueError, match="missing required 'options' field"):
+        with pytest.raises(ValueError, match="missing required 'init_options' field"):
             load_image_models(str(models_file))
 
 
