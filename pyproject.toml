@@ -16,10 +16,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "black",
+    "build",
     "mypy",
     "pillow",
     "pytest",
     "ruff",
+    "twine",
     "types-PyYAML",
 ]
 

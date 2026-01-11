@@ -126,36 +126,42 @@ def merge_options(
     return merged
 
 
-def expand_env_vars(value: Any) -> Any:
+def expand_path_fields(options: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Recursively expand environment variables in strings, dicts, and lists.
+    Expand environment variables and ~ in known path fields.
 
-    Expands ${VAR_NAME} patterns in strings using os.path.expandvars().
-    Recursively processes dictionaries and lists.
+    Expands values only for keys that end with '_path'
+    (e.g., diffusion_model_path, vae_path, clip_l_path, llm_path).
+
+    All other values are returned unchanged to protect user content
+    like prompts from unintended expansion.
 
     Args:
-        value: The value to process (can be str, dict, list, or other types)
+        options: Dictionary of options (typically model["options"])
 
     Returns:
-        The value with environment variables expanded
+        Dictionary with path fields expanded
 
     Examples:
         >>> os.environ['HOME'] = '/home/user'
-        >>> expand_env_vars('${HOME}/models')
-        '/home/user/models'
-        >>> expand_env_vars({'path': '${HOME}/models', 'name': 'test'})
-        {'path': '/home/user/models', 'name': 'test'}
-        >>> expand_env_vars(['${HOME}/a', '${HOME}/b'])
-        ['/home/user/a', '/home/user/b']
+        >>> expand_path_fields({'model_path': '${HOME}/model.gguf', 'prompt': '$HOME'})
+        {'model_path': '/home/user/model.gguf', 'prompt': '$HOME'}
+        >>> expand_path_fields({'vae_path': '~/vae.safetensors', 'seed': 42})
+        {'vae_path': '/home/user/vae.safetensors', 'seed': 42}
     """
-    if isinstance(value, str):
-        return os.path.expandvars(value)
-    elif isinstance(value, dict):
-        return {k: expand_env_vars(v) for k, v in value.items()}
-    elif isinstance(value, list):
-        return [expand_env_vars(item) for item in value]
-    else:
-        return value
+
+    def expand_path(value: str) -> str:
+        """Expand both environment variables and ~ in a path string."""
+        return os.path.expanduser(os.path.expandvars(value))
+
+    expanded = {}
+    for key, value in options.items():
+        if isinstance(value, str) and key.endswith("_path"):
+            expanded[key] = expand_path(value)
+        else:
+            expanded[key] = value
+
+    return expanded
 
 
 def merge_image_options(

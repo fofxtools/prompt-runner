@@ -212,23 +212,32 @@ class TestLoadImageModels:
         models_file.write_text(
             """
 - name: flux1-schnell
-  diffusion_model_path: ${TEST_HOME}/models/flux.gguf
-  clip_l_path: ${TEST_HOME}/encoders/clip_l.safetensors
   options:
+    diffusion_model_path: ${TEST_HOME}/models/flux.gguf
+    clip_l_path: ${TEST_HOME}/encoders/clip_l.safetensors
     cfg_scale: 1.0
     sample_steps: 6
 - name: sd15
-  model_path: ${TEST_HOME}/models/sd15.safetensors
+  options:
+    model_path: ${TEST_HOME}/models/sd15.safetensors
 """
         )
         models = load_image_models(str(models_file))
         assert len(models) == 2
         assert models[0]["name"] == "flux1-schnell"
-        assert models[0]["diffusion_model_path"] == "/home/user/models/flux.gguf"
-        assert models[0]["clip_l_path"] == "/home/user/encoders/clip_l.safetensors"
+        assert (
+            models[0]["options"]["diffusion_model_path"]
+            == "/home/user/models/flux.gguf"
+        )
+        assert (
+            models[0]["options"]["clip_l_path"]
+            == "/home/user/encoders/clip_l.safetensors"
+        )
         assert models[0]["options"]["cfg_scale"] == 1.0
         assert models[1]["name"] == "sd15"
-        assert models[1]["model_path"] == "/home/user/models/sd15.safetensors"
+        assert (
+            models[1]["options"]["model_path"] == "/home/user/models/sd15.safetensors"
+        )
 
     def test_missing_file(self):
         """Test that missing file raises FileNotFoundError."""
@@ -238,8 +247,20 @@ class TestLoadImageModels:
     def test_missing_name_field(self, tmp_path):
         """Test that missing name field raises ValueError."""
         models_file = tmp_path / "image_models.yaml"
-        models_file.write_text("- model_path: /path/to/model\n")
-        with pytest.raises(ValueError):
+        models_file.write_text(
+            """
+- options:
+    model_path: /path/to/model
+"""
+        )
+        with pytest.raises(ValueError, match="missing required 'name' field"):
+            load_image_models(str(models_file))
+
+    def test_missing_options_field(self, tmp_path):
+        """Test that missing options field raises ValueError."""
+        models_file = tmp_path / "image_models.yaml"
+        models_file.write_text("- name: test-model\n")
+        with pytest.raises(ValueError, match="missing required 'options' field"):
             load_image_models(str(models_file))
 
 
@@ -253,13 +274,14 @@ class TestLoadImagePrompts:
             """
 - id: cute_cat_txt2img
   mode: txt2img
-  prompt: A cute fluffy cat
+  options:
+    prompt: A cute fluffy cat
 - id: cat_img2img
   mode: img2img
-  prompt: A refined cat image
-  init_image: assets/input/cat.jpg
-  strength: 0.7
   options:
+    prompt: A refined cat image
+    init_image: assets/input/cat.jpg
+    strength: 0.7
     seed: 42
 """
         )
@@ -267,10 +289,11 @@ class TestLoadImagePrompts:
         assert len(prompts) == 2
         assert prompts[0]["id"] == "cute_cat_txt2img"
         assert prompts[0]["mode"] == "txt2img"
-        assert prompts[0]["prompt"] == "A cute fluffy cat"
+        assert prompts[0]["options"]["prompt"] == "A cute fluffy cat"
         assert prompts[1]["id"] == "cat_img2img"
         assert prompts[1]["mode"] == "img2img"
-        assert prompts[1]["strength"] == 0.7
+        assert prompts[1]["options"]["strength"] == 0.7
+        assert prompts[1]["options"]["init_image"] == "assets/input/cat.jpg"
 
     def test_missing_file(self):
         """Test that missing file raises FileNotFoundError."""
@@ -331,8 +354,8 @@ class TestLoadImagePrompts:
         with pytest.raises(ValueError):
             load_image_prompts(str(prompts_file))
 
-    def test_missing_prompt_field(self, tmp_path):
-        """Test that missing prompt field raises ValueError."""
+    def test_missing_required_field(self, tmp_path):
+        """Test that missing required field raises ValueError."""
         prompts_file = tmp_path / "image_prompts.yaml"
         prompts_file.write_text(
             """

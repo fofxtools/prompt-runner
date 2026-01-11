@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 import yaml
 
-from .utils import expand_env_vars
+from .utils import expand_path_fields
 
 
 def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
@@ -207,9 +207,9 @@ def load_image_models(
 
     The file must contain a YAML list where each model has:
     - name: the model identifier
-    - Path parameters (at least one): model_path, diffusion_model_path, clip_l_path,
-      clip_g_path, t5xxl_path, llm_path, vae_path
-    - options: (optional) dict of init and generation options
+    - options: dict containing all StableDiffusion initialization parameters
+      (diffusion_model_path, model_path, clip_l_path, clip_g_path, t5xxl_path,
+      llm_path, vae_path, keep_clip_on_cpu, cfg_scale, sample_steps, etc.)
 
     Environment variables in path fields are expanded using expand_env_vars().
 
@@ -243,13 +243,19 @@ def load_image_models(
         if "name" not in model:
             raise ValueError(f"Model at index {i} missing required 'name' field")
 
-        if "options" in model and not isinstance(model["options"], dict):
+        # Validate options field (required)
+        if "options" not in model:
+            raise ValueError(f"Model at index {i} missing required 'options' field")
+
+        if not isinstance(model["options"], dict):
             raise ValueError(
                 f"Model '{model.get('name', i)}' field 'options' must be a dictionary"
             )
 
-    # Expand environment variables in all models
-    models = expand_env_vars(models)
+    # Expand environment variables in path fields only
+    # (fields ending with '_path')
+    for model in models:
+        model["options"] = expand_path_fields(model["options"])
 
     return models
 
@@ -263,14 +269,8 @@ def load_image_prompts(
     Each prompt must have:
     - id: string matching regex ^[a-z0-9_]+$
     - mode: "txt2img" or "img2img"
-    - prompt: the prompt text
-
-    Optional fields:
-    - negative_prompt: negative prompt text
-    - init_image: path to input image (required for img2img)
-    - strength: float for img2img (0.0-1.0)
-    - options: dict of generation options
-    - n: number of images to generate (default: 1)
+    - options: dict containing all StableDiffusion.generate_image() parameters
+      (prompt, negative_prompt, cfg_scale, sample_steps, seed, batch_count, etc.)
 
     Args:
         prompts_path: Path to the image_prompts.yaml file (default: config/image_prompts.yaml)
@@ -331,12 +331,11 @@ def load_image_prompts(
                 f"Must be 'txt2img' or 'img2img'"
             )
 
-        # Validate prompt field
-        if "prompt" not in prompt:
-            raise ValueError(f"Prompt '{prompt_id}' missing required 'prompt' field")
+        # Validate options field (required)
+        if "options" not in prompt:
+            raise ValueError(f"Prompt '{prompt_id}' missing required 'options' field")
 
-        # Validate options if present
-        if "options" in prompt and not isinstance(prompt["options"], dict):
+        if not isinstance(prompt["options"], dict):
             raise ValueError(
                 f"Prompt '{prompt_id}' field 'options' must be a dictionary"
             )

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from PIL import Image
 from stable_diffusion_cpp import StableDiffusion
 
 
@@ -100,3 +101,39 @@ def initialize_stable_diffusion(model_config: Dict[str, Any]) -> StableDiffusion
     # Pass all options to StableDiffusion
     # Let StableDiffusion validate parameters and fail fast if invalid
     return StableDiffusion(**model_config["options"])
+
+
+def generate_image(
+    sd: StableDiffusion,
+    model_config: Dict[str, Any],
+    prompt_config: Dict[str, Any],
+    options: Dict[str, Any],
+) -> List[Image.Image]:
+    """
+    Generate image(s) using a StableDiffusion instance.
+
+    This function is a thin pass-through layer over
+    stable-diffusion-cpp-python. All StableDiffusion parameters
+    (including prompt text, batching, and generation options)
+    must be provided via prompt_config["options"] and options.
+
+    Orchestration-only fields such as "id" and "mode" are not
+    passed to StableDiffusion.
+
+    No validation or whitelisting is performed here.
+    StableDiffusion is expected to validate parameters and
+    fail fast if invalid.
+
+    Args:
+        sd: Initialized StableDiffusion instance
+        model_config: Model configuration dictionary (unused; kept for symmetry)
+        prompt_config: Prompt configuration dictionary containing an "options" dict
+        options: Global / merged generation defaults
+
+    Returns:
+        List of generated PIL Image objects
+    """
+    params = dict(options)
+    params.update(prompt_config["options"])
+
+    return sd.generate_image(**params)

@@ -21,6 +21,7 @@ config.*.php
 /local/
 
 # Storage Folders
+/public/storage
 /storage/
 /uploads/
 
@@ -55,9 +56,10 @@ usage_tracking*.json
 # Build Folders
 /build/
 /coverage/
+/dist/
 /node_modules/
 /public/build/
-/public/storage
+/public/dist/
 
 # Temporary Files / Backup Files
 *.bak

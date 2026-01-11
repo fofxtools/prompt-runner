@@ -4,7 +4,12 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from prompt_runner.image_runner import initialize_stable_diffusion, save_image_summary
+from PIL import Image
+from prompt_runner.image_runner import (
+    generate_image,
+    initialize_stable_diffusion,
+    save_image_summary,
+)
 
 
 class TestSaveImageSummary:
@@ -19,8 +24,16 @@ class TestSaveImageSummary:
         run_path.mkdir()
 
         prompts = [
-            {"id": "cute_cat_txt2img", "mode": "txt2img", "prompt": "A cute cat"},
-            {"id": "cat_img2img", "mode": "img2img", "prompt": "Refined cat"},
+            {
+                "id": "cute_cat_txt2img",
+                "mode": "txt2img",
+                "options": {"prompt": "A cute cat"},
+            },
+            {
+                "id": "cat_img2img",
+                "mode": "img2img",
+                "options": {"prompt": "Refined cat"},
+            },
         ]
         models = [
             {"name": "flux1-schnell"},
@@ -49,7 +62,7 @@ class TestSaveImageSummary:
         run_id = "2026-01-10T12:34:56Z-abc123"
         run_dir_name = "nonexistent"
         created_at = "2026-01-10T12:34:56Z"
-        prompts = [{"id": "test", "mode": "txt2img", "prompt": "Test"}]
+        prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
         models = [{"name": "model"}]
 
         with pytest.raises(FileNotFoundError):
@@ -135,3 +148,134 @@ class TestInitializeStableDiffusion:
 
         with pytest.raises(ValueError, match="missing 'options' field"):
             initialize_stable_diffusion(model_config)
+
+
+class TestGenerateImage:
+    """Tests for generate_image function."""
+
+    def test_txt2img_basic(self):
+        """Test basic txt2img generation."""
+        mock_sd = MagicMock()
+        mock_image = Image.new("RGB", (512, 512), color="red")
+        mock_sd.generate_image.return_value = [mock_image]
+
+        model_config = {"name": "test-model", "options": {}}
+        prompt_config = {
+            "id": "test",
+            "mode": "txt2img",
+            "options": {"prompt": "a cute cat"},
+        }
+        options = {"width": 512, "height": 512}
+
+        result = generate_image(mock_sd, model_config, prompt_config, options)
+
+        assert len(result) == 1
+        assert result[0] == mock_image
+        mock_sd.generate_image.assert_called_once_with(
+            width=512, height=512, prompt="a cute cat"
+        )
+
+    def test_txt2img_with_negative_prompt(self):
+        """Test txt2img with negative prompt (pass-through)."""
+        mock_sd = MagicMock()
+        mock_image = Image.new("RGB", (512, 512), color="blue")
+        mock_sd.generate_image.return_value = [mock_image]
+
+        model_config = {"name": "test-model", "options": {}}
+        prompt_config = {
+            "id": "test",
+            "mode": "txt2img",
+            "options": {
+                "prompt": "a cute cat",
+                "negative_prompt": "ugly",
+            },
+        }
+        options = {}
+
+        result = generate_image(mock_sd, model_config, prompt_config, options)
+
+        assert len(result) == 1
+        mock_sd.generate_image.assert_called_once_with(
+            prompt="a cute cat", negative_prompt="ugly"
+        )
+
+    def test_txt2img_multiple_images(self):
+        """Test generating multiple images using batch_count."""
+        mock_sd = MagicMock()
+        mock_images = [
+            Image.new("RGB", (512, 512), color="green"),
+            Image.new("RGB", (512, 512), color="blue"),
+            Image.new("RGB", (512, 512), color="red"),
+        ]
+        mock_sd.generate_image.return_value = mock_images
+
+        model_config = {"name": "test-model", "options": {}}
+        prompt_config = {
+            "id": "test",
+            "mode": "txt2img",
+            "options": {"prompt": "test", "batch_count": 3},
+        }
+        options = {}
+
+        result = generate_image(mock_sd, model_config, prompt_config, options)
+
+        assert len(result) == 3
+        mock_sd.generate_image.assert_called_once_with(prompt="test", batch_count=3)
+
+    def test_img2img_with_strength(self):
+        """Test img2img with strength parameter (pass-through)."""
+        mock_sd = MagicMock()
+        mock_image = Image.new("RGB", (512, 512), color="yellow")
+        mock_sd.generate_image.return_value = [mock_image]
+
+        model_config = {"name": "test-model", "options": {}}
+        prompt_config = {
+            "id": "test",
+            "mode": "img2img",
+            "options": {
+                "prompt": "blue eyes",
+                "init_image": "/path/to/image.png",
+                "strength": 0.7,
+            },
+        }
+        options = {}
+
+        result = generate_image(mock_sd, model_config, prompt_config, options)
+
+        assert len(result) == 1
+        call_kwargs = mock_sd.generate_image.call_args[1]
+        assert call_kwargs["prompt"] == "blue eyes"
+        assert call_kwargs["init_image"] == "/path/to/image.png"
+        assert call_kwargs["strength"] == 0.7
+
+    def test_pass_through_all_prompt_fields(self):
+        """Test that all fields in options are passed through."""
+        mock_sd = MagicMock()
+        mock_image = Image.new("RGB", (512, 512), color="red")
+        mock_sd.generate_image.return_value = [mock_image]
+
+        model_config = {"name": "test-model", "options": {}}
+        prompt_config = {
+            "id": "test",
+            "mode": "txt2img",
+            "options": {
+                "prompt": "test",
+                "negative_prompt": "bad",
+                "custom_field": "custom_value",  # Should be passed through
+                "another_field": 123,  # Should be passed through
+            },
+        }
+        options = {"width": 512}
+
+        generate_image(mock_sd, model_config, prompt_config, options)
+
+        call_kwargs = mock_sd.generate_image.call_args[1]
+        assert call_kwargs["prompt"] == "test"
+        assert call_kwargs["negative_prompt"] == "bad"
+        assert call_kwargs["custom_field"] == "custom_value"
+        assert call_kwargs["another_field"] == 123
+        assert call_kwargs["width"] == 512
+        # Metadata fields should NOT be passed through
+        assert "id" not in call_kwargs
+        assert "mode" not in call_kwargs
+        assert "options" not in call_kwargs

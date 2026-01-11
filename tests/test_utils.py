@@ -3,7 +3,7 @@
 import pytest
 from prompt_runner.utils import (
     create_result_structure,
-    expand_env_vars,
+    expand_path_fields,
     generate_run_identifiers,
     merge_image_options,
     merge_options,
@@ -188,49 +188,32 @@ class TestMergeOptions:
         assert result["top_p"] == 0.95  # From prompt
 
 
-class TestExpandEnvVars:
-    """Tests for expand_env_vars function."""
+class TestExpandPathFields:
+    """Tests for expand_path_fields function."""
 
-    # Use monkeypatch to set environment variables for tests to avoid environment pollution
-    def test_expand_string_with_env_var(self, monkeypatch):
-        """Test expanding environment variable in a string."""
-        monkeypatch.setenv("TEST_VAR", "/test/path")
-        result = expand_env_vars("${TEST_VAR}/models")
-        assert result == "/test/path/models"
-
-    def test_expand_dict_with_env_vars(self, monkeypatch):
-        """Test expanding environment variables in a dictionary."""
-        monkeypatch.setenv("TEST_HOME", "/home/user")
-        input_dict = {"path": "${TEST_HOME}/models", "name": "test"}
-        result = expand_env_vars(input_dict)
-        assert result == {"path": "/home/user/models", "name": "test"}
-
-    def test_expand_list_with_env_vars(self, monkeypatch):
-        """Test expanding environment variables in a list."""
-        monkeypatch.setenv("TEST_DIR", "/data")
-        input_list = ["${TEST_DIR}/a", "${TEST_DIR}/b"]
-        result = expand_env_vars(input_list)
-        assert result == ["/data/a", "/data/b"]
-
-    def test_nested_structures(self, monkeypatch):
-        """Test expanding environment variables in nested structures."""
-        monkeypatch.setenv("BASE", "/base")
-        input_data = {
-            "paths": ["${BASE}/path1", "${BASE}/path2"],
-            "config": {"root": "${BASE}/config"},
+    def test_expands_path_fields(self, monkeypatch):
+        """Test that fields ending with _path are expanded."""
+        monkeypatch.setenv("HOME", "/home/user")
+        options = {
+            "model_path": "${HOME}/model.gguf",
+            "vae_path": "${HOME}/vae.safetensors",
+            "prompt": "A cat in ${HOME} garden",
         }
-        result = expand_env_vars(input_data)
-        assert result == {
-            "paths": ["/base/path1", "/base/path2"],
-            "config": {"root": "/base/config"},
-        }
+        result = expand_path_fields(options)
+        assert result["model_path"] == "/home/user/model.gguf"
+        assert result["vae_path"] == "/home/user/vae.safetensors"
+        assert result["prompt"] == "A cat in ${HOME} garden"  # NOT expanded
 
-    def test_non_string_values_unchanged(self):
-        """Test that non-string values are returned unchanged."""
-        assert expand_env_vars(42) == 42
-        assert expand_env_vars(3.14) == 3.14
-        assert expand_env_vars(True) is True
-        assert expand_env_vars(None) is None
+    def test_expands_tilde(self, monkeypatch):
+        """Test that ~ is expanded in path fields."""
+        monkeypatch.setenv("HOME", "/home/user")
+        options = {
+            "model_path": "~/models/flux.gguf",
+            "prompt": "~/not/expanded",
+        }
+        result = expand_path_fields(options)
+        assert result["model_path"] == "/home/user/models/flux.gguf"
+        assert result["prompt"] == "~/not/expanded"  # NOT expanded
 
 
 class TestMergeImageOptions:
