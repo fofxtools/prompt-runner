@@ -40,9 +40,16 @@ class TestSaveImageSummary:
             {"name": "flux1-schnell"},
             {"name": "sd15"},
         ]
+        model_timings = {"flux1-schnell": 45.67, "sd15": 23.45}
 
         save_image_summary(
-            run_id, run_dir_name, created_at, str(tmp_path), prompts, models
+            run_id,
+            run_dir_name,
+            created_at,
+            str(tmp_path),
+            prompts,
+            models,
+            model_timings,
         )
 
         summary_file = run_path / "summary.json"
@@ -57,6 +64,10 @@ class TestSaveImageSummary:
         assert summary["image"]["model_count"] == 2
         assert summary["image"]["prompts"] == ["cute_cat_txt2img", "cat_img2img"]
         assert summary["image"]["models"] == ["flux1-schnell", "sd15"]
+        assert summary["image"]["model_timings"] == {
+            "flux1-schnell": 45.67,
+            "sd15": 23.45,
+        }
 
     def test_raises_if_directory_missing(self, tmp_path):
         """Test that FileNotFoundError is raised if directory doesn't exist."""
@@ -65,10 +76,17 @@ class TestSaveImageSummary:
         created_at = "2026-01-10T12:34:56Z"
         prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
         models = [{"name": "model"}]
+        model_timings = {}
 
         with pytest.raises(FileNotFoundError):
             save_image_summary(
-                run_id, run_dir_name, created_at, str(tmp_path), prompts, models
+                run_id,
+                run_dir_name,
+                created_at,
+                str(tmp_path),
+                prompts,
+                models,
+                model_timings,
             )
 
 

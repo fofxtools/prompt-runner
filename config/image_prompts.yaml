@@ -54,13 +54,8 @@
     init_image: assets/input/cat.jpg
     strength: 0.7
 
-- id: portrait_style_transfer_img2img
+- id: painting_to_photorealistic_img2img
   mode: img2img
   options:
-    prompt: |
-      A photorealistic studio portrait with natural skin texture,
-      soft dramatic lighting, shallow depth of field.
-    negative_prompt: |
-      cartoon, illustration, plastic skin, oversharpened
+    prompt: Make this painting photorealistic.
     init_image: assets/input/mona_lisa.jpg
-    strength: 0.7

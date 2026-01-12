@@ -3,9 +3,12 @@
 - name: gemma3:4b
 - name: llama3.1:8b
 - name: llava:7b
+- name: ministral-3:8b
 - name: mistral-nemo:12b
 - name: mistral:7b
 - name: phi3:3.8b
 - name: qwen2.5-coder:7b
 - name: qwen2.5:7b
+- name: qwen2.5vl:7b
+- name: qwen3-vl:8b
 - name: qwen3:8b

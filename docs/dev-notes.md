@@ -21,3 +21,7 @@ When Flux Dev was the first model in image_models.yaml, there were memory errors
 ## SDXL and resolution
 
 SDXL is very resolution sensitive. It is designed for 1024x1024. The results are very poor at 512x512.
+
+## Reasoning models and token use
+
+With reasoning capable Qwen3 models (qwen3-vl:8b, qwen3:8b), you may receive empty or truncated outputs with num_predict=512. This is because the thinking process may use up all the tokens. Try increasing num_predict to 1024 or higher.

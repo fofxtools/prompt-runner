@@ -1,6 +1,7 @@
 """LLM runner logic for executing prompts across multiple models."""
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -21,6 +22,7 @@ def save_llm_summary(
     results_dir: str,
     prompts: List[Dict[str, Any]],
     models: List[Dict[str, Any]],
+    model_timings: Dict[str, float],
 ) -> None:
     """
     Save the run summary metadata to summary.json.
@@ -32,6 +34,7 @@ def save_llm_summary(
         results_dir: The base results directory path
         prompts: List of prompt dictionaries
         models: List of model dictionaries
+        model_timings: Dict mapping model names to elapsed time in seconds
 
     Raises:
         FileNotFoundError: If the run directory does not exist
@@ -56,6 +59,7 @@ def save_llm_summary(
             "model_count": len(models),
             "prompts": prompt_ids,
             "models": model_names,
+            "model_timings": model_timings,
         },
     }
 
@@ -200,42 +204,45 @@ def run_llm_eval(
     # Create result directory structure
     create_result_structure(run_dir_name, results_dir)
 
-    # Save run metadata
-    save_llm_summary(run_id, run_dir_name, created_at, results_dir, prompts, models)
-
     # Initialize ollama client
     client = ollama.Client()
 
     # Get global defaults
     global_defaults = config.get("llm_generation_defaults")
 
-    # Process each prompt
-    for prompt_dict in prompts:
-        prompt_id = prompt_dict["id"]
-        prompt_options = prompt_dict.get("options")
+    # Track timing per model
+    model_timings = {}
 
-        # Determine prompt type based on structure
-        is_completion_prompt = "prompt" in prompt_dict
-        is_chat_prompt = "messages" in prompt_dict
+    # Process each model
+    for model_dict in models:
+        model_name = model_dict["name"]
+        model_options = model_dict.get("options")
 
-        # Filter prompts based on prompt_filter
-        if prompt_filter == "completion" and not is_completion_prompt:
-            continue
-        if prompt_filter == "chat" and not is_chat_prompt:
-            continue
+        print(f"\nProcessing model: {model_name}")
 
-        # Validate prompt structure
-        if not is_completion_prompt and not is_chat_prompt:
-            raise ValueError(
-                f"Prompt '{prompt_id}' must have either 'prompt' or 'messages' field"
-            )
+        # Start timing for this model
+        start_time = time.time()
 
-        print(f"\nProcessing prompt: {prompt_id}")
+        # Process each prompt
+        for prompt_dict in prompts:
+            prompt_id = prompt_dict["id"]
+            prompt_options = prompt_dict.get("options")
 
-        # Process each model
-        for model_dict in models:
-            model_name = model_dict["name"]
-            model_options = model_dict.get("options")
+            # Determine prompt type based on structure
+            is_completion_prompt = "prompt" in prompt_dict
+            is_chat_prompt = "messages" in prompt_dict
+
+            # Filter prompts based on prompt_filter
+            if prompt_filter == "completion" and not is_completion_prompt:
+                continue
+            if prompt_filter == "chat" and not is_chat_prompt:
+                continue
+
+            # Validate prompt structure
+            if not is_completion_prompt and not is_chat_prompt:
+                raise ValueError(
+                    f"Prompt '{prompt_id}' must have either 'prompt' or 'messages' field"
+                )
 
             # Merge options (global < model < prompt priority)
             options = merge_options(global_defaults, model_options, prompt_options)
@@ -243,14 +250,14 @@ def run_llm_eval(
             # Run prompt in its native form
             if is_completion_prompt:
                 current_mode = "completion"
-                print(f"  Model: {model_name} (mode: {current_mode})")
+                print(f"  Prompt: {prompt_id} (mode: {current_mode})")
                 prompt_text = prompt_dict["prompt"]
                 output = generate_response_completion(
                     client, model_name, prompt_text, options
                 )
             else:  # is_chat_prompt
                 current_mode = "chat"
-                print(f"  Model: {model_name} (mode: {current_mode})")
+                print(f"  Prompt: {prompt_id} (mode: {current_mode})")
                 messages = prompt_dict["messages"]
                 output = generate_response_chat(client, model_name, messages, options)
 
@@ -275,6 +282,14 @@ def run_llm_eval(
             )
 
             print("    ✓ Saved result")
+
+        # Record elapsed time for this model
+        model_timings[model_name] = round(time.time() - start_time, 3)
+
+    # Save run metadata with timings
+    save_llm_summary(
+        run_id, run_dir_name, created_at, results_dir, prompts, models, model_timings
+    )
 
     print(f"\n✓ Evaluation complete. Run ID: {run_id}")
     return run_id

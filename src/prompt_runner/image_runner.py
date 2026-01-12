@@ -1,6 +1,7 @@
 """Image generation runner logic."""
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -22,6 +23,7 @@ def save_image_summary(
     results_dir: str,
     prompts: List[Dict[str, Any]],
     models: List[Dict[str, Any]],
+    model_timings: Dict[str, float],
 ) -> None:
     """
     Save the run summary metadata to summary.json.
@@ -33,6 +35,7 @@ def save_image_summary(
         results_dir: The base results directory path
         prompts: List of prompt dictionaries
         models: List of model dictionaries
+        model_timings: Dict mapping model names to elapsed time in seconds
 
     Raises:
         FileNotFoundError: If the run directory does not exist
@@ -57,6 +60,7 @@ def save_image_summary(
             "model_count": len(models),
             "prompts": prompt_ids,
             "models": model_names,
+            "model_timings": model_timings,
         },
     }
 
@@ -184,16 +188,19 @@ def run_image_eval(
     # Create result directory structure
     run_path = create_result_structure(run_dir_name, results_dir)
 
-    # Save run metadata
-    save_image_summary(run_id, run_dir_name, created_at, results_dir, prompts, models)
-
     # Get global defaults
     global_defaults = config.get("image_generation_defaults")
+
+    # Track timing per model
+    model_timings = {}
 
     # Process each model
     for model in models:
         model_name = model["name"]
         print(f"Initializing model: {model_name}")
+
+        # Start timing for this model
+        start_time = time.time()
 
         # Initialize StableDiffusion
         sd = initialize_stable_diffusion(model)
@@ -251,5 +258,13 @@ def run_image_eval(
                     json.dump(metadata, f, indent=2)
 
                 print(f"    Saved: {img_filename}")
+
+        # Record elapsed time for this model
+        model_timings[model_name] = round(time.time() - start_time, 3)
+
+    # Save run metadata with timings
+    save_image_summary(
+        run_id, run_dir_name, created_at, results_dir, prompts, models, model_timings
+    )
 
     return run_id

@@ -27,9 +27,16 @@ class TestSaveLlmSummary:
             {"id": "test2", "prompt": "Test 2"},
         ]
         models = [{"name": "model1"}, {"name": "model2"}]
+        model_timings = {"model1": 12.34, "model2": 8.56}
 
         save_llm_summary(
-            run_id, run_dir_name, created_at, str(tmp_path), prompts, models
+            run_id,
+            run_dir_name,
+            created_at,
+            str(tmp_path),
+            prompts,
+            models,
+            model_timings,
         )
 
         summary_file = run_path / "summary.json"
@@ -44,6 +51,7 @@ class TestSaveLlmSummary:
         assert summary["llm"]["model_count"] == 2
         assert summary["llm"]["prompts"] == ["test1", "test2"]
         assert summary["llm"]["models"] == ["model1", "model2"]
+        assert summary["llm"]["model_timings"] == {"model1": 12.34, "model2": 8.56}
 
     def test_raises_if_directory_missing(self, tmp_path):
         """Test that FileNotFoundError is raised if directory doesn't exist."""
@@ -52,10 +60,17 @@ class TestSaveLlmSummary:
         created_at = "2026-01-08T12:34:56Z"
         prompts = [{"id": "test", "prompt": "Test"}]
         models = [{"name": "model"}]
+        model_timings = {}
 
         with pytest.raises(FileNotFoundError):
             save_llm_summary(
-                run_id, run_dir_name, created_at, str(tmp_path), prompts, models
+                run_id,
+                run_dir_name,
+                created_at,
+                str(tmp_path),
+                prompts,
+                models,
+                model_timings,
             )
 
 
