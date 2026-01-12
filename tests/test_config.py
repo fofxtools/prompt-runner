@@ -205,22 +205,21 @@ class TestLoadModels:
 class TestLoadImageModels:
     """Tests for load_image_models function."""
 
-    def test_load_valid_models(self, tmp_path, monkeypatch):
-        """Test loading valid image models with environment variable expansion."""
-        monkeypatch.setenv("TEST_HOME", "/home/user")
+    def test_load_valid_models(self, tmp_path):
+        """Test loading valid image models."""
         models_file = tmp_path / "image_models.yaml"
         models_file.write_text(
             """
 - name: flux1-schnell
   init_options:
-    diffusion_model_path: ${TEST_HOME}/models/flux.gguf
-    clip_l_path: ${TEST_HOME}/encoders/clip_l.safetensors
+    diffusion_model_path: /home/shared/ai/models/flux.gguf
+    clip_l_path: /home/shared/ai/encoders/clip_l.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 6
 - name: sd15
   init_options:
-    model_path: ${TEST_HOME}/models/sd15.safetensors
+    model_path: /home/shared/ai/models/sd15.safetensors
 """
         )
         models = load_image_models(str(models_file))
@@ -228,17 +227,17 @@ class TestLoadImageModels:
         assert models[0]["name"] == "flux1-schnell"
         assert (
             models[0]["init_options"]["diffusion_model_path"]
-            == "/home/user/models/flux.gguf"
+            == "/home/shared/ai/models/flux.gguf"
         )
         assert (
             models[0]["init_options"]["clip_l_path"]
-            == "/home/user/encoders/clip_l.safetensors"
+            == "/home/shared/ai/encoders/clip_l.safetensors"
         )
         assert models[0]["generation_options"]["cfg_scale"] == 1.0
         assert models[1]["name"] == "sd15"
         assert (
             models[1]["init_options"]["model_path"]
-            == "/home/user/models/sd15.safetensors"
+            == "/home/shared/ai/models/sd15.safetensors"
         )
 
     def test_missing_file(self):

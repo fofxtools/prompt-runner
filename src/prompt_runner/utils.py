@@ -1,6 +1,5 @@
 """Utility functions for the evals project."""
 
-import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -124,44 +123,6 @@ def merge_options(
         merged.update(prompt_options)
 
     return merged
-
-
-def expand_path_fields(options: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Expand environment variables and ~ in known path fields.
-
-    Expands values only for keys that end with '_path'
-    (e.g., diffusion_model_path, vae_path, clip_l_path, llm_path).
-
-    All other values are returned unchanged to protect user content
-    like prompts from unintended expansion.
-
-    Args:
-        options: Dictionary of options (typically model["options"])
-
-    Returns:
-        Dictionary with path fields expanded
-
-    Examples:
-        >>> os.environ['HOME'] = '/home/user'
-        >>> expand_path_fields({'model_path': '${HOME}/model.gguf', 'prompt': '$HOME'})
-        {'model_path': '/home/user/model.gguf', 'prompt': '$HOME'}
-        >>> expand_path_fields({'vae_path': '~/vae.safetensors', 'seed': 42})
-        {'vae_path': '/home/user/vae.safetensors', 'seed': 42}
-    """
-
-    def expand_path(value: str) -> str:
-        """Expand both environment variables and ~ in a path string."""
-        return os.path.expanduser(os.path.expandvars(value))
-
-    expanded = {}
-    for key, value in options.items():
-        if isinstance(value, str) and key.endswith("_path"):
-            expanded[key] = expand_path(value)
-        else:
-            expanded[key] = value
-
-    return expanded
 
 
 def merge_image_options(

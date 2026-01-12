@@ -7,11 +7,11 @@ export CUDACXX=/usr/local/cuda/bin/nvcc
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ```
 
-Set up evals and install packages:
+Set up prompt-runner and install packages:
 
 ```
-mkdir ~/evals
-cd ~/evals
+mkdir ~/prompt-runner
+cd ~/prompt-runner
 python3 -m venv .venv
 
 echo -e "ollama" >> requirements.txt

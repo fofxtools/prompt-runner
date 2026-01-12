@@ -3,7 +3,6 @@
 import pytest
 from prompt_runner.utils import (
     create_result_structure,
-    expand_path_fields,
     generate_run_identifiers,
     merge_image_options,
     merge_options,
@@ -186,34 +185,6 @@ class TestMergeOptions:
         assert result["temperature"] == 0.9  # Overridden by prompt
         assert result["num_predict"] == 100  # From model
         assert result["top_p"] == 0.95  # From prompt
-
-
-class TestExpandPathFields:
-    """Tests for expand_path_fields function."""
-
-    def test_expands_path_fields(self, monkeypatch):
-        """Test that fields ending with _path are expanded."""
-        monkeypatch.setenv("HOME", "/home/user")
-        options = {
-            "model_path": "${HOME}/model.gguf",
-            "vae_path": "${HOME}/vae.safetensors",
-            "prompt": "A cat in ${HOME} garden",
-        }
-        result = expand_path_fields(options)
-        assert result["model_path"] == "/home/user/model.gguf"
-        assert result["vae_path"] == "/home/user/vae.safetensors"
-        assert result["prompt"] == "A cat in ${HOME} garden"  # NOT expanded
-
-    def test_expands_tilde(self, monkeypatch):
-        """Test that ~ is expanded in path fields."""
-        monkeypatch.setenv("HOME", "/home/user")
-        options = {
-            "model_path": "~/models/flux.gguf",
-            "prompt": "~/not/expanded",
-        }
-        result = expand_path_fields(options)
-        assert result["model_path"] == "/home/user/models/flux.gguf"
-        assert result["prompt"] == "~/not/expanded"  # NOT expanded
 
 
 class TestMergeImageOptions:

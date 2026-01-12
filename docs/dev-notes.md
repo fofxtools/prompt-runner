@@ -18,6 +18,6 @@ ignore_missing_imports = true
 
 When Flux Dev was the first model in image_models.yaml, there were memory errors (segmentation faults). Moving it to the end of the file resolved the issue.
 
-## SDXL and resultion
+## SDXL and resolution
 
 SDXL is very resolution sensitive. It is designed for 1024x1024. The results are very poor at 512x512.

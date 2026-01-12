@@ -6,8 +6,6 @@ from typing import Any, Dict, List
 
 import yaml
 
-from .utils import expand_path_fields
-
 
 def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
     """
@@ -213,13 +211,11 @@ def load_image_models(
     - generation_options: (optional) dict containing default generation parameters
       (cfg_scale, sample_steps, width, height, etc.)
 
-    Environment variables and ~ in path fields are expanded using expand_path_fields().
-
     Args:
         models_path: Path to the image_models.yaml file (default: config/image_models.yaml)
 
     Returns:
-        List of model dictionaries with expanded environment variables
+        List of model dictionaries from the configuration file
 
     Raises:
         FileNotFoundError: If the models file doesn't exist
@@ -263,11 +259,6 @@ def load_image_models(
             raise ValueError(
                 f"Model '{model.get('name', i)}' field 'generation_options' must be a dictionary"
             )
-
-    # Expand environment variables in path fields only
-    # (fields ending with '_path')
-    for model in models:
-        model["init_options"] = expand_path_fields(model["init_options"])
 
     return models
 
