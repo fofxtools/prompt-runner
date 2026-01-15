@@ -131,15 +131,74 @@ def generate_response_completion(
         options: Generation options to pass to ollama
 
     Returns:
-        Dictionary with:
-        - text: Generated response text
-        - done_reason: Reason generation stopped
+        Dictionary with 'output' and 'metrics' keys:
+        - output.text: Generated response text
+        - metrics.done_reason: Reason generation stopped
+        - metrics.input_tokens: Number of input tokens processed
+        - metrics.output_tokens: Number of output tokens generated
+        - metrics.total_tokens: Total tokens (input + output)
+        - metrics.load_seconds: Time spent loading model (seconds)
+        - metrics.input_seconds: Time spent processing input (seconds)
+        - metrics.output_seconds: Time spent generating output (seconds)
+        - metrics.total_seconds: Total generation time (seconds)
+        - metrics.output_tokens_per_second: Output generation speed (tokens/second)
     """
     response = client.generate(model=model, prompt=prompt, options=options)
 
+    # Extract token counts
+    input_tokens = response.get("prompt_eval_count")
+    output_tokens = response.get("eval_count")
+    total_tokens = None
+    if input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    # Extract timing metrics (convert from nanoseconds to seconds, round to 3 decimals)
+    # Ollama field mapping:
+    #   load_duration -> load_seconds
+    #   prompt_eval_duration -> input_seconds
+    #   eval_duration -> output_seconds
+    #   total_duration -> total_seconds
+    load_seconds = None
+    if response.get("load_duration") is not None:
+        load_seconds = round(response["load_duration"] / 1e9, 3)
+
+    input_seconds = None
+    if response.get("prompt_eval_duration") is not None:
+        input_seconds = round(response["prompt_eval_duration"] / 1e9, 3)
+
+    output_seconds = None
+    if response.get("eval_duration") is not None:
+        output_seconds = round(response["eval_duration"] / 1e9, 3)
+
+    total_seconds = None
+    if response.get("total_duration") is not None:
+        total_seconds = round(response["total_duration"] / 1e9, 3)
+
+    # Calculate throughput
+    output_tokens_per_second = None
+    if (
+        output_tokens is not None
+        and output_seconds is not None
+        and isinstance(output_seconds, (int, float))
+        and output_seconds > 0
+    ):
+        output_tokens_per_second = round(output_tokens / output_seconds, 3)
+
     return {
-        "text": response["response"],
-        "done_reason": response.get("done_reason"),
+        "output": {
+            "text": response["response"],
+        },
+        "metrics": {
+            "done_reason": response.get("done_reason"),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "load_seconds": load_seconds,
+            "input_seconds": input_seconds,
+            "output_seconds": output_seconds,
+            "total_seconds": total_seconds,
+            "output_tokens_per_second": output_tokens_per_second,
+        },
     }
 
 
@@ -159,15 +218,74 @@ def generate_response_chat(
         options: Generation options to pass to ollama
 
     Returns:
-        Dictionary with:
-        - text: Generated response text
-        - done_reason: Reason generation stopped
+        Dictionary with 'output' and 'metrics' keys:
+        - output.text: Generated response text
+        - metrics.done_reason: Reason generation stopped
+        - metrics.input_tokens: Number of input tokens processed
+        - metrics.output_tokens: Number of output tokens generated
+        - metrics.total_tokens: Total tokens (input + output)
+        - metrics.load_seconds: Time spent loading model (seconds)
+        - metrics.input_seconds: Time spent processing input (seconds)
+        - metrics.output_seconds: Time spent generating output (seconds)
+        - metrics.total_seconds: Total generation time (seconds)
+        - metrics.output_tokens_per_second: Output generation speed (tokens/second)
     """
     response = client.chat(model=model, messages=messages, options=options)
 
+    # Extract token counts
+    input_tokens = response.get("prompt_eval_count")
+    output_tokens = response.get("eval_count")
+    total_tokens = None
+    if input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    # Extract timing metrics (convert from nanoseconds to seconds, round to 3 decimals)
+    # Ollama field mapping:
+    #   load_duration -> load_seconds
+    #   prompt_eval_duration -> input_seconds
+    #   eval_duration -> output_seconds
+    #   total_duration -> total_seconds
+    load_seconds = None
+    if response.get("load_duration") is not None:
+        load_seconds = round(response["load_duration"] / 1e9, 3)
+
+    input_seconds = None
+    if response.get("prompt_eval_duration") is not None:
+        input_seconds = round(response["prompt_eval_duration"] / 1e9, 3)
+
+    output_seconds = None
+    if response.get("eval_duration") is not None:
+        output_seconds = round(response["eval_duration"] / 1e9, 3)
+
+    total_seconds = None
+    if response.get("total_duration") is not None:
+        total_seconds = round(response["total_duration"] / 1e9, 3)
+
+    # Calculate throughput
+    output_tokens_per_second = None
+    if (
+        output_tokens is not None
+        and output_seconds is not None
+        and isinstance(output_seconds, (int, float))
+        and output_seconds > 0
+    ):
+        output_tokens_per_second = round(output_tokens / output_seconds, 3)
+
     return {
-        "text": response["message"]["content"],
-        "done_reason": response.get("done_reason"),
+        "output": {
+            "text": response["message"]["content"],
+        },
+        "metrics": {
+            "done_reason": response.get("done_reason"),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "load_seconds": load_seconds,
+            "input_seconds": input_seconds,
+            "output_seconds": output_seconds,
+            "total_seconds": total_seconds,
+            "output_tokens_per_second": output_tokens_per_second,
+        },
     }
 
 
@@ -252,14 +370,14 @@ def run_llm_eval(
                 current_mode = "completion"
                 print(f"  Prompt: {prompt_id} (mode: {current_mode})")
                 prompt_text = prompt_dict["prompt"]
-                output = generate_response_completion(
+                response = generate_response_completion(
                     client, model_name, prompt_text, options
                 )
             else:  # is_chat_prompt
                 current_mode = "chat"
                 print(f"  Prompt: {prompt_id} (mode: {current_mode})")
                 messages = prompt_dict["messages"]
-                output = generate_response_chat(client, model_name, messages, options)
+                response = generate_response_chat(client, model_name, messages, options)
 
             # Create result dictionary
             result_data = {
@@ -268,7 +386,8 @@ def run_llm_eval(
                 "prompt_id": prompt_id,
                 "model": model_name,
                 "mode": current_mode,
-                "output": output,
+                "output": response["output"],
+                "metrics": response["metrics"],
             }
 
             # Save result

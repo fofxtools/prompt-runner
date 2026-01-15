@@ -226,14 +226,30 @@ class TestGenerateResponseCompletion:
         mock_client.generate.return_value = {
             "response": "Test response text",
             "done_reason": "stop",
+            "prompt_eval_count": 10,
+            "eval_count": 20,
+            "load_duration": 1000000,  # 0.001 seconds in nanoseconds
+            "prompt_eval_duration": 1234000000,  # 1.234 seconds in nanoseconds
+            "eval_duration": 2345000000,  # 2.345 seconds in nanoseconds
+            "total_duration": 3580000000,  # 3.580 seconds in nanoseconds
         }
 
         result = generate_response_completion(
             mock_client, "test-model", "test prompt", {}
         )
 
-        assert result["text"] == "Test response text"
-        assert result["done_reason"] == "stop"
+        assert result["output"]["text"] == "Test response text"
+        assert result["metrics"]["done_reason"] == "stop"
+        assert result["metrics"]["input_tokens"] == 10
+        assert result["metrics"]["output_tokens"] == 20
+        assert result["metrics"]["total_tokens"] == 30
+        assert result["metrics"]["load_seconds"] == 0.001
+        assert result["metrics"]["input_seconds"] == 1.234
+        assert result["metrics"]["output_seconds"] == 2.345
+        assert result["metrics"]["total_seconds"] == 3.580
+        assert (
+            result["metrics"]["output_tokens_per_second"] == 8.529
+        )  # 20 / 2.345 = 8.529
         mock_client.generate.assert_called_once_with(
             model="test-model", prompt="test prompt", options={}
         )
@@ -247,8 +263,16 @@ class TestGenerateResponseCompletion:
             mock_client, "test-model", "test prompt", {}
         )
 
-        assert result["text"] == "Test response"
-        assert result["done_reason"] is None
+        assert result["output"]["text"] == "Test response"
+        assert result["metrics"]["done_reason"] is None
+        assert result["metrics"]["input_tokens"] is None
+        assert result["metrics"]["output_tokens"] is None
+        assert result["metrics"]["total_tokens"] is None
+        assert result["metrics"]["load_seconds"] is None
+        assert result["metrics"]["input_seconds"] is None
+        assert result["metrics"]["output_seconds"] is None
+        assert result["metrics"]["total_seconds"] is None
+        assert result["metrics"]["output_tokens_per_second"] is None
 
 
 class TestGenerateResponseChat:
@@ -260,13 +284,27 @@ class TestGenerateResponseChat:
         mock_client.chat.return_value = {
             "message": {"content": "Chat response text"},
             "done_reason": "stop",
+            "prompt_eval_count": 15,
+            "eval_count": 25,
+            "load_duration": 2000000,  # 0.002 seconds in nanoseconds
+            "prompt_eval_duration": 1500000000,  # 1.5 seconds in nanoseconds
+            "eval_duration": 2500000000,  # 2.5 seconds in nanoseconds
+            "total_duration": 4002000000,  # 4.002 seconds in nanoseconds
         }
 
         messages = [{"role": "user", "content": "Hello"}]
         result = generate_response_chat(mock_client, "test-model", messages, {})
 
-        assert result["text"] == "Chat response text"
-        assert result["done_reason"] == "stop"
+        assert result["output"]["text"] == "Chat response text"
+        assert result["metrics"]["done_reason"] == "stop"
+        assert result["metrics"]["input_tokens"] == 15
+        assert result["metrics"]["output_tokens"] == 25
+        assert result["metrics"]["total_tokens"] == 40
+        assert result["metrics"]["load_seconds"] == 0.002
+        assert result["metrics"]["input_seconds"] == 1.5
+        assert result["metrics"]["output_seconds"] == 2.5
+        assert result["metrics"]["total_seconds"] == 4.002
+        assert result["metrics"]["output_tokens_per_second"] == 10.0  # 25 / 2.5
         mock_client.chat.assert_called_once_with(
             model="test-model", messages=messages, options={}
         )
@@ -279,8 +317,16 @@ class TestGenerateResponseChat:
         messages = [{"role": "user", "content": "Hello"}]
         result = generate_response_chat(mock_client, "test-model", messages, {})
 
-        assert result["text"] == "Chat response"
-        assert result["done_reason"] is None
+        assert result["output"]["text"] == "Chat response"
+        assert result["metrics"]["done_reason"] is None
+        assert result["metrics"]["input_tokens"] is None
+        assert result["metrics"]["output_tokens"] is None
+        assert result["metrics"]["total_tokens"] is None
+        assert result["metrics"]["load_seconds"] is None
+        assert result["metrics"]["input_seconds"] is None
+        assert result["metrics"]["output_seconds"] is None
+        assert result["metrics"]["total_seconds"] is None
+        assert result["metrics"]["output_tokens_per_second"] is None
 
 
 class TestRunLlmEval:

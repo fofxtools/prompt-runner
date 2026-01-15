@@ -13,35 +13,35 @@
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors
 
-- name: abyssorangemix3AOM3_aom3a1b.safetensors
+- name: abyssorangemix3AOM3_aom3a1b
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/abyssorangemix3AOM3_aom3a1b.safetensors
 
-- name: anythingAnd_anythingAndEverything.safetensors
+- name: anythingAnd_anythingAndEverything
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/anythingAnd_anythingAndEverything.safetensors
 
-- name: dreamshaper_8.safetensors
+- name: dreamshaper_8
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/dreamshaper_8.safetensors
 
-- name: juggernautXL_ragnarokBy.safetensors
+- name: juggernautXL_ragnarokBy
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/juggernautXL_ragnarokBy.safetensors
 
-- name: meinamix_v12Final.safetensors
+- name: meinamix_v12Final
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/meinamix_v12Final.safetensors
 
-- name: realisticVisionV60B1_v51HyperVAE.safetensors
+- name: realisticVisionV60B1_v51HyperVAE
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/realisticVisionV60B1_v51HyperVAE.safetensors
 
-- name: toonyou_beta6.safetensors
+- name: toonyou_beta6
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/toonyou_beta6.safetensors
 
-- name: sd_xl_base_1.0.safetensors
+- name: sd_xl_base_1.0
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/sd_xl_base_1.0.safetensors
     clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
@@ -99,7 +99,7 @@
     cfg_scale: 1.0
     sample_steps: 6
 
-- name: flux1-dev-Q5_1.gguf
+- name: flux1-dev-Q5_1
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux1-dev-Q5_1.gguf
     clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors

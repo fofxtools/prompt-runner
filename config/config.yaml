@@ -3,7 +3,7 @@ results_dir: storage/results/
 
 llm_generation_defaults:
   temperature: 0.2
-  num_predict: 512
+  num_predict: -1
 
 image_generation_defaults:
   width: 512
