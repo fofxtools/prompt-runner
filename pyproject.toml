@@ -34,6 +34,13 @@ where = ["src"]
 [tool.setuptools.package-data]
 prompt_runner = ["py.typed"]
 
+[tool.mypy]
+strict = true
+
 [[tool.mypy.overrides]]
 module = "stable_diffusion_cpp.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

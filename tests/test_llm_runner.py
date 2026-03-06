@@ -1,6 +1,8 @@
 """Unit tests for src/llm_runner.py"""
 
 import json
+from typing import Dict
+
 import pytest
 from unittest.mock import Mock
 from prompt_runner.llm_runner import (
@@ -60,7 +62,7 @@ class TestSaveLlmSummary:
         created_at = "2026-01-08T12:34:56Z"
         prompts = [{"id": "test", "prompt": "Test"}]
         models = [{"name": "model"}]
-        model_timings = {}
+        model_timings: Dict[str, float] = {}
 
         with pytest.raises(FileNotFoundError):
             save_llm_summary(

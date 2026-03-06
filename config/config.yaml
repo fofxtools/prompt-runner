@@ -9,3 +9,5 @@ image_generation_defaults:
   width: 512
   height: 512
   seed: -1
+
+image_generation_custom:

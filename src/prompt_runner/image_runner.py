@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 from PIL import Image
 from stable_diffusion_cpp import StableDiffusion
@@ -152,7 +152,38 @@ def generate_image(
     params = dict(options)
     params.update(prompt_config["options"])
 
-    return sd.generate_image(**params)
+    return cast(List[Image.Image], sd.generate_image(**params))
+
+
+def generate_image_with_settings(
+    sd: StableDiffusion,
+    model_config: Dict[str, Any],
+    prompt_config: Dict[str, Any],
+    options: Dict[str, Any],
+    custom_options: Dict[str, Any],
+) -> List[Image.Image]:
+    """
+    Apply custom settings and generate image(s).
+
+    Applies prompt_prefix from custom_options, then delegates to generate_image().
+
+    Args:
+        sd: Initialized StableDiffusion instance
+        model_config: Model configuration dictionary
+        prompt_config: Prompt configuration dictionary containing an "options" dict
+        options: Merged generation options
+        custom_options: Custom options from image_generation_custom config
+
+    Returns:
+        List of generated PIL Image objects
+    """
+    prompt_prefix = custom_options.get("prompt_prefix", "")
+    if prompt_prefix and "prompt" in prompt_config.get("options", {}):
+        prompt_config["options"]["prompt"] = (
+            prompt_prefix + prompt_config["options"]["prompt"]
+        )
+
+    return generate_image(sd, model_config, prompt_config, options)
 
 
 def run_image_eval(
@@ -188,8 +219,9 @@ def run_image_eval(
     # Create result directory structure
     run_path = create_result_structure(run_dir_name, results_dir)
 
-    # Get global defaults
+    # Get global defaults and custom options
     global_defaults = config.get("image_generation_defaults")
+    custom_options = config.get("image_generation_custom", {})
 
     # Track timing per model
     model_timings = {}
@@ -230,7 +262,9 @@ def run_image_eval(
             )
 
             # Generate images
-            images = generate_image(sd, model, prompt, merged_options)
+            images = generate_image_with_settings(
+                sd, model, prompt, merged_options, custom_options
+            )
 
             # Save each generated image
             sanitized_model_name = sanitize_fs_name(model_name)

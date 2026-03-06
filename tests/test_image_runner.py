@@ -1,6 +1,7 @@
 """Unit tests for src/prompt_runner/image_runner.py"""
 
 import json
+from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -76,7 +77,7 @@ class TestSaveImageSummary:
         created_at = "2026-01-10T12:34:56Z"
         prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
         models = [{"name": "model"}]
-        model_timings = {}
+        model_timings: Dict[str, float] = {}
 
         with pytest.raises(FileNotFoundError):
             save_image_summary(
@@ -210,7 +211,7 @@ class TestGenerateImage:
                 "negative_prompt": "ugly",
             },
         }
-        options = {}
+        options: Dict[str, Any] = {}
 
         result = generate_image(mock_sd, model_config, prompt_config, options)
 
@@ -235,7 +236,7 @@ class TestGenerateImage:
             "mode": "txt2img",
             "options": {"prompt": "test", "batch_count": 3},
         }
-        options = {}
+        options: Dict[str, Any] = {}
 
         result = generate_image(mock_sd, model_config, prompt_config, options)
 
@@ -258,7 +259,7 @@ class TestGenerateImage:
                 "strength": 0.7,
             },
         }
-        options = {}
+        options: Dict[str, Any] = {}
 
         result = generate_image(mock_sd, model_config, prompt_config, options)
 
@@ -466,3 +467,25 @@ class TestRunImageEval:
             ValueError, match="Invalid mode_filter: invalid. Must be 'txt2img'"
         ):
             run_image_eval(config, prompts, models, mode_filter="invalid")
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_prompt_prefix_prepended(self, mock_generate, mock_init_sd, tmp_path):
+        """Test that prompt_prefix from image_generation_custom is prepended."""
+        mock_sd = MagicMock()
+        mock_init_sd.return_value = mock_sd
+        mock_generate.return_value = [Image.new("RGB", (512, 512))]
+
+        config = {
+            "results_dir": str(tmp_path),
+            "image_generation_defaults": {},
+            "image_generation_custom": {"prompt_prefix": "masterpiece, "},
+        }
+        prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "a cat"}}]
+        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+
+        run_image_eval(config, prompts, models)
+
+        call_args = mock_generate.call_args
+        prompt_config = call_args[0][2]
+        assert prompt_config["options"]["prompt"] == "masterpiece, a cat"
