@@ -1,0 +1,42 @@
+# Changelog
+
+## [0.1.4] - 2026-10-09
+
+### Image models
+- Added SDXL-family entries: `dreamshaperXL_lightningDPMSDE`, `dreamshaperXL_alpha2Xl10`,
+  `dreamshaperXL_lightningInpaint`, `kohakuXLEpsilon_rev2`,
+  `sdxlFixedvaeFp16Remove_baseFixedvaeV1Fp16`, `LahCuteCartoonSDXL_alpha`.
+- Fixed `flux1-schnell-Q5_K_S`'s `t5xxl_path` (was pointing at the fp16 safetensors
+  encoder instead of the GGUF-quantized one).
+- Removed `keep_clip_on_cpu: true` from several entries where it wasn't actually needed.
+- Added `PornMaster_Flux2Klein_v4_Turbo_Q5_K`: FLUX.2 Klein 9B via a patched GGUF UNet
+  (`scripts/patch_gguf_head_dim.py` - see below) plus LoRA support via `lora_model_dir`.
+- Added `snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K`: FLUX.2 Klein 9B with
+  SNOFS merged directly into the weights, converted from the original fp8 safetensors
+  (which stable-diffusion.cpp upconverts to F16 on load, too large for a 16GB card) to
+  Q5_K GGUF via `stable_diffusion_cpp.sd_cpp.convert()`.
+- Added `qwen-image-2.1-Q4_K_M`: not usable yet, `stable-diffusion-cpp-python` 0.4.7
+  predates upstream's Qwen-Image-2.1 support.
+- Added `Qwen-Image-Edit-2509-Q3_K_M`: working, including image editing via
+  `ref_images` and LoRA support via `lora_model_dir`. Needs `offload_params_to_cpu`
+  (text encoder + diffusion model alone exceed 16GB VRAM) and the native-format VAE,
+  not the diffusers-format one also present in `vae/`.
+
+### Scripts
+- Added `scripts/patch_gguf_head_dim.py`: fixes community-quantized FLUX.2 GGUFs whose
+  attention norm-scale tensors use `.weight` instead of the `.scale` suffix
+  stable-diffusion.cpp expects, which otherwise causes a SIGFPE on load (wrong `num_heads`
+  inferred) and tensor-loading failures.
+
+### Packaging
+- Moved `pillow` from the `dev` extra to core `dependencies` - `image_runner.py` imports
+  it unconditionally, so a plain `pip install prompt-runner` was broken without `[dev]`.
+- Added `gguf` to the `dev` extra - required by `scripts/patch_gguf_head_dim.py`.
+
+### Docs
+- `dev-notes.md`: added notes on the GGUF norm-scale tensor naming issue above,
+  `stable-diffusion-cpp-python` being unpinned (a stale venv silently misdetects newer
+  architectures like FLUX.2 Klein as a generic/older variant instead of failing loudly),
+  the fp8-to-GGUF conversion technique, diffusers-format vs native-format VAE
+  incompatibility, and VAE load failures surfacing as a segfault in `generate_image()`
+  rather than an error at load time.

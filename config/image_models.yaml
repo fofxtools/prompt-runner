@@ -25,6 +25,26 @@
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/dreamshaper_8.safetensors
 
+- name: dreamshaperXL_lightningDPMSDE
+  init_options:
+    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_lightningDPMSDE.safetensors
+  generation_options:
+    cfg_scale: 2.0
+    sample_steps: 5
+
+- name: dreamshaperXL_alpha2Xl10
+  init_options:
+    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_alpha2Xl10.safetensors
+  generation_options:
+    cfg_scale: 6.0
+
+- name: dreamshaperXL_lightningInpaint
+  init_options:
+    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_lightningInpaint.safetensors
+  generation_options:
+    cfg_scale: 2.0
+    sample_steps: 5
+
 - name: juggernautXL_ragnarokBy
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/juggernautXL_ragnarokBy.safetensors
@@ -41,13 +61,24 @@
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/toonyou_beta6.safetensors
 
+- name: kohakuXLEpsilon_rev2
+  init_options:
+    model_path: /home/shared/ai/diffusion/checkpoints/kohakuXLEpsilon_rev2.safetensors
+
+- name: sdxlFixedvaeFp16Remove_baseFixedvaeV1Fp16
+  init_options:
+    model_path: /home/shared/ai/diffusion/checkpoints/sdxlFixedvaeFp16Remove_baseFixedvaeV1Fp16.safetensors
+
+- name: LahCuteCartoonSDXL_alpha
+  init_options:
+    model_path: /home/shared/ai/diffusion/checkpoints/LahCuteCartoonSDXL_alpha.safetensors
+
 - name: sd_xl_base_1.0
   init_options:
     model_path: /home/shared/ai/diffusion/checkpoints/sd_xl_base_1.0.safetensors
     clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
     clip_g_path: /home/shared/ai/text_encoders/clip_g.safetensors
     vae_path: /home/shared/ai/vae/sdxl.vae.safetensors
-    keep_clip_on_cpu: true
   generation_options:
     width: 1024
     height: 1024
@@ -61,11 +92,11 @@
     clip_g_path: /home/shared/ai/text_encoders/clip_g.safetensors
     t5xxl_path: /home/shared/ai/text_encoders/t5xxl_fp16.safetensors
     vae_path: /home/shared/ai/vae/diffusion_pytorch_model.safetensors
-    keep_clip_on_cpu: true
   generation_options:
     cfg_scale: 4.5
     sample_steps: 20
 
+# keep_clip_on_cpu: true needed even at 512x512
 - name: sd3.5_large_turbo-Q5_1
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
@@ -78,34 +109,104 @@
     cfg_scale: 1.0
     sample_steps: 6
 
+# Above 872x872 will need keep_clip_on_cpu: true
+# Above 1160x1160 will need both keep_clip_on_cpu: true and keep_vae_on_cpu: true
+# Fails above 1416x1416
 - name: z_image_turbo-Q5_K_M
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/z_image_turbo-Q5_K_M.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
     vae_path: /home/shared/ai/vae/ae.safetensors
-    keep_clip_on_cpu: true
   generation_options:
     cfg_scale: 1.0
     sample_steps: 9
 
+# At 1024x1024 will need keep_vae_on_cpu: true
 - name: flux1-schnell-Q5_K_S
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux1-schnell-Q5_K_S.gguf
     clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
-    t5xxl_path: /home/shared/ai/text_encoders/t5xxl_fp16.safetensors
+    t5xxl_path: /home/shared/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
     vae_path: /home/shared/ai/vae/ae.safetensors
-    keep_clip_on_cpu: true
   generation_options:
     cfg_scale: 1.0
     sample_steps: 6
 
+# At 1024x1024 will need both keep_clip_on_cpu: true and keep_vae_on_cpu: true
 - name: flux1-dev-Q5_1
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux1-dev-Q5_1.gguf
     clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
     t5xxl_path: /home/shared/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
     vae_path: /home/shared/ai/vae/ae.safetensors
-    keep_clip_on_cpu: true
   generation_options:
     cfg_scale: 1.0
+    sample_steps: 20
+
+# FLUX.2 Klein 9B, PornMaster NSFW finetune, Turbo-distilled (4 steps).
+# diffusion_model_path is a patched copy (scripts/patch_gguf_head_dim.py) - the
+# original community GGUF uses ".weight" suffix on attention norm-scale tensors
+# where stable-diffusion.cpp expects ".scale"; unpatched, this SIGFPEs on load.
+# See docs/dev-notes.md.
+- name: PornMaster_Flux2Klein_v4_Turbo_Q5_K
+  init_options:
+    diffusion_model_path: /home/shared/ai/diffusion/gguf/PornMaster_Flux2Klein_v4_Turbo_Q5_K.sdcpp-patched.gguf
+    llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    lora_model_dir: /home/shared/ai/lora
+    keep_vae_on_cpu: true
+  generation_options:
+    cfg_scale: 1.0
+    sample_steps: 4
+    guidance: 3.5
+
+# FLUX.2 Klein 9B, SNOFS merged directly into the weights rather than applied
+# as a LoRA. Converted from the original fp8 safetensors (which
+# stable-diffusion.cpp upconverts to F16 at load - 17.3GB, bigger than a
+# 16GB card's entire VRAM) to Q5_K GGUF via stable_diffusion_cpp.sd_cpp.convert().
+# Already uses correct native tensor naming (the tool's own converter, unlike
+# community GGUF conversions - see PornMaster_Flux2Klein_v4_Turbo_Q5_K above).
+- name: snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K
+  init_options:
+    diffusion_model_path: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K.gguf
+    llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    keep_vae_on_cpu: true
+  generation_options:
+    cfg_scale: 1.0
+    sample_steps: 4
+    guidance: 3.5
+
+# Qwen-Image-2.1. Text encoder must be Qwen3-VL-8B (not plain Qwen3-4B, that's
+# for Klein).
+# Requires stable-diffusion.cpp's Qwen-Image-2.1 support, added upstream after
+# the current stable-diffusion-cpp-python 0.4.7 release. Not usable yet.
+- name: qwen-image-2.1-Q4_K_M
+  init_options:
+    diffusion_model_path: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q4_K_M.gguf
+    llm_path: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    vae_path: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
+    lora_model_dir: /home/shared/ai/lora
+    keep_vae_on_cpu: true
+  generation_options:
+    cfg_scale: 1.0
+    sample_steps: 25
+
+# offload_params_to_cpu is required, not optional: text encoder (7.1GB) +
+# diffusion model (9.3GB) exceeds a 16GB card's VRAM regardless of image
+# resolution. vae_path must be the native/ComfyUI-split-format file
+# (qwen_image_vae.safetensors) - the diffusers-format VAE also in vae/
+# (Qwen2.5-VL-7B-Instruct-diffusion_pytorch_model.safetensors) uses a
+# different tensor naming convention and fails to load. Needs ref_images=[...]
+# in generate_image() since this is an image-editing model, not txt2img.
+- name: Qwen-Image-Edit-2509-Q3_K_M
+  init_options:
+    diffusion_model_path: /home/shared/ai/diffusion/gguf/Qwen-Image-Edit-2509-Q3_K_M.gguf
+    llm_path: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    llm_vision_path: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf
+    vae_path: /home/shared/ai/vae/qwen_image_vae.safetensors
+    lora_model_dir: /home/shared/ai/lora
+    offload_params_to_cpu: true
+  generation_options:
+    cfg_scale: 2.5
     sample_steps: 20
