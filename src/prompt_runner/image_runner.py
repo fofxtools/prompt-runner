@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, cast
+from typing import Any, cast
 
 from PIL import Image
 from stable_diffusion_cpp import StableDiffusion
@@ -21,9 +21,9 @@ def save_image_summary(
     run_dir_name: str,
     created_at: str,
     results_dir: str,
-    prompts: List[Dict[str, Any]],
-    models: List[Dict[str, Any]],
-    model_timings: Dict[str, float],
+    prompts: list[dict[str, Any]],
+    models: list[dict[str, Any]],
+    model_timings: dict[str, float],
 ) -> None:
     """
     Save the run summary metadata to summary.json.
@@ -69,7 +69,10 @@ def save_image_summary(
         json.dump(summary, f, indent=2)
 
 
-def initialize_stable_diffusion(model_config: Dict[str, Any]) -> StableDiffusion:
+def initialize_stable_diffusion(
+    model_config: dict[str, Any],
+    init_defaults: dict[str, Any] | None = None,
+) -> StableDiffusion:
     """
     Initialize a StableDiffusion instance from model configuration.
 
@@ -77,7 +80,8 @@ def initialize_stable_diffusion(model_config: Dict[str, Any]) -> StableDiffusion
     to StableDiffusion. The "name" and "generation_options" fields are excluded.
 
     All init_options are passed through as-is. StableDiffusion will validate
-    and fail fast if invalid.
+    and fail fast if invalid. Optional init_defaults (config.yaml
+    image_init_defaults) are applied underneath: a model's own init_options win.
 
     Args:
         model_config: Model configuration dictionary.
@@ -86,6 +90,8 @@ def initialize_stable_diffusion(model_config: Dict[str, Any]) -> StableDiffusion
               (diffusion_model_path, model_path, clip_l_path, vae_path,
               keep_clip_on_cpu, vae_decode_only, etc.)
             - "generation_options": (excluded, used during generation)
+        init_defaults: Optional defaults for init_options shared by all models
+            (e.g. lora_model_dir). Overridden by the model's init_options.
 
     Returns:
         Initialized StableDiffusion instance
@@ -116,15 +122,15 @@ def initialize_stable_diffusion(model_config: Dict[str, Any]) -> StableDiffusion
 
     # Pass all init_options to StableDiffusion
     # Let StableDiffusion validate parameters and fail fast if invalid
-    return StableDiffusion(**model_config["init_options"])
+    return StableDiffusion(**{**(init_defaults or {}), **model_config["init_options"]})
 
 
 def generate_image(
     sd: StableDiffusion,
-    model_config: Dict[str, Any],
-    prompt_config: Dict[str, Any],
-    options: Dict[str, Any],
-) -> List[Image.Image]:
+    model_config: dict[str, Any],
+    prompt_config: dict[str, Any],
+    options: dict[str, Any],
+) -> list[Image.Image]:
     """
     Generate image(s) using a StableDiffusion instance.
 
@@ -152,16 +158,16 @@ def generate_image(
     params = dict(options)
     params.update(prompt_config["options"])
 
-    return cast(List[Image.Image], sd.generate_image(**params))
+    return cast(list[Image.Image], sd.generate_image(**params))
 
 
 def generate_image_with_settings(
     sd: StableDiffusion,
-    model_config: Dict[str, Any],
-    prompt_config: Dict[str, Any],
-    options: Dict[str, Any],
-    custom_options: Dict[str, Any],
-) -> List[Image.Image]:
+    model_config: dict[str, Any],
+    prompt_config: dict[str, Any],
+    options: dict[str, Any],
+    custom_options: dict[str, Any],
+) -> list[Image.Image]:
     """
     Apply custom settings and generate image(s).
 
@@ -187,9 +193,9 @@ def generate_image_with_settings(
 
 
 def run_image_eval(
-    config: Dict[str, Any],
-    prompts: List[Dict[str, Any]],
-    models: List[Dict[str, Any]],
+    config: dict[str, Any],
+    prompts: list[dict[str, Any]],
+    models: list[dict[str, Any]],
     mode_filter: str = "all",
 ) -> str:
     """
@@ -221,7 +227,8 @@ def run_image_eval(
 
     # Get global defaults and custom options
     global_defaults = config.get("image_generation_defaults")
-    custom_options = config.get("image_generation_custom", {})
+    init_defaults = config.get("image_init_defaults")
+    custom_options = config.get("image_generation_custom") or {}
 
     # Track timing per model
     model_timings = {}
@@ -235,7 +242,7 @@ def run_image_eval(
         start_time = time.time()
 
         # Initialize StableDiffusion
-        sd = initialize_stable_diffusion(model)
+        sd = initialize_stable_diffusion(model, init_defaults)
 
         # Process each prompt
         for prompt in prompts:

@@ -4,7 +4,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 def sanitize_fs_name(name: str) -> str:
@@ -91,10 +91,10 @@ def create_result_structure(run_dir_name: str, results_dir: str) -> Path:
 
 
 def merge_options(
-    global_defaults: Dict[str, Any] | None,
-    model_options: Dict[str, Any] | None,
-    prompt_options: Dict[str, Any] | None,
-) -> Dict[str, Any]:
+    global_defaults: dict[str, Any] | None,
+    model_options: dict[str, Any] | None,
+    prompt_options: dict[str, Any] | None,
+) -> dict[str, Any]:
     """
     Merge global defaults, model-level and prompt-level options.
 
@@ -126,10 +126,10 @@ def merge_options(
 
 
 def merge_image_options(
-    global_defaults: Dict[str, Any] | None,
-    model_options: Dict[str, Any] | None,
-    prompt_options: Dict[str, Any] | None,
-) -> Dict[str, Any]:
+    global_defaults: dict[str, Any] | None,
+    model_options: dict[str, Any] | None,
+    prompt_options: dict[str, Any] | None,
+) -> dict[str, Any]:
     """
     Merge global defaults, model-level and prompt-level options for image generation.
 

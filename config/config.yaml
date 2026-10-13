@@ -5,6 +5,10 @@ llm_generation_defaults:
   temperature: 0.2
   num_predict: -1
 
+# Applied to every model's init_options (a model's own init_options override these)
+image_init_defaults:
+  lora_model_dir: /home/shared/ai/lora
+
 image_generation_defaults:
   width: 512
   height: 512

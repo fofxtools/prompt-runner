@@ -19,6 +19,7 @@ Usage:
     python scripts/patch_gguf_head_dim.py path/to/model.gguf
     python scripts/patch_gguf_head_dim.py path/to/model.gguf -o path/to/out.gguf
 """
+
 import argparse
 import re
 import sys

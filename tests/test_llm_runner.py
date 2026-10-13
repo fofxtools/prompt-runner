@@ -1,15 +1,15 @@
 """Unit tests for src/llm_runner.py"""
 
 import json
-from typing import Dict
+from unittest.mock import Mock
 
 import pytest
-from unittest.mock import Mock
+
 from prompt_runner.llm_runner import (
-    save_llm_summary,
-    save_llm_result,
-    generate_response_completion,
     generate_response_chat,
+    generate_response_completion,
+    save_llm_result,
+    save_llm_summary,
 )
 
 
@@ -62,7 +62,7 @@ class TestSaveLlmSummary:
         created_at = "2026-01-08T12:34:56Z"
         prompts = [{"id": "test", "prompt": "Test"}]
         models = [{"name": "model"}]
-        model_timings: Dict[str, float] = {}
+        model_timings: dict[str, float] = {}
 
         with pytest.raises(FileNotFoundError):
             save_llm_summary(
@@ -348,8 +348,9 @@ class TestRunLlmEval:
     @pytest.mark.parametrize("prompt_filter", ["completion", "chat", "all"])
     def test_valid_prompt_filters_accepted(self, prompt_filter):
         """Test that valid prompt_filter values are accepted without ValueError."""
-        from prompt_runner.llm_runner import run_llm_eval
         from unittest.mock import patch
+
+        from prompt_runner.llm_runner import run_llm_eval
 
         config = {"results_dir": "/tmp/test"}
         prompts = [{"id": "test", "prompt": "Test"}]

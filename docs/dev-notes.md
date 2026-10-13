@@ -115,3 +115,27 @@ the failure only surfaces when `generate_image()` is called, as a segfault (`NUL
 pointer access` from the Python binding, `dumped core` from the process). If you hit a
 segfault specifically during decode, with no other error, check what was logged during
 VAE loading earlier in the output - the real error is there, not at the crash site.
+
+## FLUX.2 Klein on a 16GB card: init flags, LoRAs, and speed
+
+Measured on an RTX 5070 Ti at 512x512, 4 steps, cfg 1.0 (stable-diffusion-cpp-python 0.4.7):
+
+- Use **no memory flags** by default: Klein 4B ~1.2s, 9B ~1.8s per image. `keep_vae_on_cpu` adds ~8s (CPU VAE decode)
+  and `keep_clip_on_cpu` adds ~5-6s (CPU text encode). They are OOM workarounds, not speedups.
+- A runtime LoRA (`<lora:name:weight>` in the prompt) OOMs at 512 on the 9B models unless the entry sets
+  `offload_params_to_cpu: true` (~10-30s per image depending on the model). Exception:
+  `flux-2-klein-9b-kv-merge-Q8_0` (9.7GB) needs `keep_clip_on_cpu: true` just to load, and then runs a LoRA at ~9s; offload
+  is much slower for it (~40s).
+- `guidance` has no effect on Klein (no guidance embedding in the weights); only `cfg_scale: 1.0` and `sample_steps: 4` matter.
+- `klein_snofs_v1_4` is a Klein 9B LoRA; on Klein 4B it aborts (`GGML_ASSERT(ggml_can_mul_mat(a, b))`). Applying it to the
+  SNOFS-merged entries applies SNOFS twice.
+- Qwen-Image-Edit-2509-Q3_K_M segfaults without `offload_params_to_cpu: true`.
+
+A failing allocation shows up as `cudaMalloc failed: out of memory` in the log, followed by `ValueError: NULL pointer
+access` or a segfault from the Python binding, not a clean exception.
+
+## lora_model_dir lives in config.yaml (image_init_defaults)
+
+`image_init_defaults` in `config/config.yaml` is merged underneath every model's `init_options` (the model's own value
+wins), so `lora_model_dir` is set once. It only matters when a prompt contains a `<lora:name:weight>` tag; the binding
+resolves relative names against it and silently skips (logs "Can not find lora") if the file isn't there.

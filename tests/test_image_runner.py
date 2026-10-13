@@ -1,11 +1,12 @@
 """Unit tests for src/prompt_runner/image_runner.py"""
 
 import json
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
+
 from prompt_runner.image_runner import (
     generate_image,
     initialize_stable_diffusion,
@@ -77,7 +78,7 @@ class TestSaveImageSummary:
         created_at = "2026-01-10T12:34:56Z"
         prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
         models = [{"name": "model"}]
-        model_timings: Dict[str, float] = {}
+        model_timings: dict[str, float] = {}
 
         with pytest.raises(FileNotFoundError):
             save_image_summary(
@@ -161,6 +162,29 @@ class TestInitializeStableDiffusion:
         )
         assert result == mock_instance
 
+    @patch("prompt_runner.image_runner.StableDiffusion")
+    def test_init_defaults_applied_and_model_options_win(self, mock_sd_class):
+        """init_defaults sit underneath init_options: used when absent, overridden when present."""
+        defaults = {"lora_model_dir": "/loras", "keep_clip_on_cpu": False}
+        model_config = {
+            "name": "test-model",
+            "init_options": {"model_path": "/m.safetensors", "keep_clip_on_cpu": True},
+        }
+
+        initialize_stable_diffusion(model_config, defaults)
+
+        mock_sd_class.assert_called_once_with(
+            model_path="/m.safetensors",
+            lora_model_dir="/loras",
+            keep_clip_on_cpu=True,
+        )
+        # inputs must not be mutated
+        assert defaults == {"lora_model_dir": "/loras", "keep_clip_on_cpu": False}
+        assert model_config["init_options"] == {
+            "model_path": "/m.safetensors",
+            "keep_clip_on_cpu": True,
+        }
+
     def test_raises_if_init_options_missing(self):
         """Test that ValueError is raised if init_options field is missing."""
         model_config = {
@@ -211,7 +235,7 @@ class TestGenerateImage:
                 "negative_prompt": "ugly",
             },
         }
-        options: Dict[str, Any] = {}
+        options: dict[str, Any] = {}
 
         result = generate_image(mock_sd, model_config, prompt_config, options)
 
@@ -236,7 +260,7 @@ class TestGenerateImage:
             "mode": "txt2img",
             "options": {"prompt": "test", "batch_count": 3},
         }
-        options: Dict[str, Any] = {}
+        options: dict[str, Any] = {}
 
         result = generate_image(mock_sd, model_config, prompt_config, options)
 
@@ -259,7 +283,7 @@ class TestGenerateImage:
                 "strength": 0.7,
             },
         }
-        options: Dict[str, Any] = {}
+        options: dict[str, Any] = {}
 
         result = generate_image(mock_sd, model_config, prompt_config, options)
 
@@ -304,6 +328,46 @@ class TestGenerateImage:
 
 class TestRunImageEval:
     """Tests for run_image_eval function."""
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_empty_image_generation_custom_key_is_tolerated(
+        self, mock_generate, mock_init_sd, tmp_path
+    ):
+        """An empty `image_generation_custom:` key in YAML loads as None and must not crash."""
+        mock_init_sd.return_value = MagicMock()
+        mock_generate.return_value = [Image.new("RGB", (512, 512), color="red")]
+        config = {
+            "results_dir": str(tmp_path),
+            "image_generation_defaults": {},
+            "image_generation_custom": None,
+        }
+        prompts = [{"id": "p", "mode": "txt2img", "options": {"prompt": "x"}}]
+        models = [{"name": "m", "init_options": {"model_path": "/test"}}]
+
+        run_image_eval(config, prompts, models, mode_filter="txt2img")
+
+        mock_generate.assert_called_once()
+
+    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
+    @patch("prompt_runner.image_runner.generate_image")
+    def test_passes_image_init_defaults_to_initialize(
+        self, mock_generate, mock_init_sd, tmp_path
+    ):
+        """config.yaml image_init_defaults must reach initialize_stable_diffusion."""
+        mock_init_sd.return_value = MagicMock()
+        mock_generate.return_value = [Image.new("RGB", (512, 512), color="red")]
+        config = {
+            "results_dir": str(tmp_path),
+            "image_generation_defaults": {},
+            "image_init_defaults": {"lora_model_dir": "/loras"},
+        }
+        prompts = [{"id": "p", "mode": "txt2img", "options": {"prompt": "x"}}]
+        models = [{"name": "m", "init_options": {"model_path": "/test"}}]
+
+        run_image_eval(config, prompts, models, mode_filter="txt2img")
+
+        mock_init_sd.assert_called_once_with(models[0], {"lora_model_dir": "/loras"})
 
     @patch("prompt_runner.image_runner.initialize_stable_diffusion")
     @patch("prompt_runner.image_runner.generate_image")

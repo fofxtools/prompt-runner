@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import ollama
 
@@ -20,9 +20,9 @@ def save_llm_summary(
     run_dir_name: str,
     created_at: str,
     results_dir: str,
-    prompts: List[Dict[str, Any]],
-    models: List[Dict[str, Any]],
-    model_timings: Dict[str, float],
+    prompts: list[dict[str, Any]],
+    models: list[dict[str, Any]],
+    model_timings: dict[str, float],
 ) -> None:
     """
     Save the run summary metadata to summary.json.
@@ -74,7 +74,7 @@ def save_llm_result(
     prompt_id: str,
     model_name: str,
     mode: str,
-    result_data: Dict[str, Any],
+    result_data: dict[str, Any],
 ) -> None:
     """
     Save an LLM result to JSON and markdown files.
@@ -119,8 +119,8 @@ def save_llm_result(
 
 
 def generate_response_completion(
-    client: ollama.Client, model: str, prompt: str, options: Dict[str, Any]
-) -> Dict[str, Any]:
+    client: ollama.Client, model: str, prompt: str, options: dict[str, Any]
+) -> dict[str, Any]:
     """
     Generate a response using the completion API (ollama.Client.generate).
 
@@ -205,9 +205,9 @@ def generate_response_completion(
 def generate_response_chat(
     client: ollama.Client,
     model: str,
-    messages: List[Dict[str, str]],
-    options: Dict[str, Any],
-) -> Dict[str, Any]:
+    messages: list[dict[str, str]],
+    options: dict[str, Any],
+) -> dict[str, Any]:
     """
     Generate a response using the chat API (ollama.chat).
 
@@ -290,9 +290,9 @@ def generate_response_chat(
 
 
 def run_llm_eval(
-    config: Dict[str, Any],
-    prompts: List[Dict[str, Any]],
-    models: List[Dict[str, Any]],
+    config: dict[str, Any],
+    prompts: list[dict[str, Any]],
+    models: list[dict[str, Any]],
     prompt_filter: str = "all",
 ) -> str:
     """

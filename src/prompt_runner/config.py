@@ -2,12 +2,12 @@
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
 
-def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
+def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     """
     Load and validate the main configuration file.
 
@@ -21,6 +21,7 @@ def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
         FileNotFoundError: If the config file doesn't exist
         yaml.YAMLError: If the YAML is invalid
         ValueError: If the configuration structure is invalid
+        TypeError: If a value has the wrong type (e.g. not a dict or list)
     """
     config_file = Path(config_path)
 
@@ -31,7 +32,7 @@ def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
         config = yaml.safe_load(f)
 
     if not isinstance(config, dict):
-        raise ValueError("Config file must contain a YAML dictionary")
+        raise TypeError("Config file must contain a YAML dictionary")
 
     # Validate required fields
     if "results_dir" not in config:
@@ -42,7 +43,7 @@ def load_config(config_path: str = "config/config.yaml") -> Dict[str, Any]:
 
 def load_llm_prompts(
     prompts_path: str = "config/llm_prompts.yaml",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Load and validate prompts from the prompts configuration file.
 
@@ -63,6 +64,7 @@ def load_llm_prompts(
         FileNotFoundError: If the prompts file doesn't exist
         yaml.YAMLError: If the YAML is invalid
         ValueError: If prompt validation fails
+        TypeError: If a value has the wrong type (e.g. not a dict or list)
     """
     prompts_file = Path(prompts_path)
 
@@ -73,7 +75,7 @@ def load_llm_prompts(
         prompts = yaml.safe_load(f)
 
     if not isinstance(prompts, list):
-        raise ValueError("Prompts file must contain a YAML list")
+        raise TypeError("Prompts file must contain a YAML list")
 
     # Validate prompt IDs
     prompt_id_pattern = re.compile(r"^[a-z0-9_]+$")
@@ -81,7 +83,7 @@ def load_llm_prompts(
 
     for i, prompt in enumerate(prompts):
         if not isinstance(prompt, dict):
-            raise ValueError(f"Prompt at index {i} must be a dictionary")
+            raise TypeError(f"Prompt at index {i} must be a dictionary")
 
         if "id" not in prompt:
             raise ValueError(f"Prompt at index {i} missing required 'id' field")
@@ -105,16 +107,14 @@ def load_llm_prompts(
         # Validate messages format if present
         if has_messages:
             if not isinstance(prompt["messages"], list):
-                raise ValueError(
-                    f"Prompt '{prompt_id}' field 'messages' must be a list"
-                )
+                raise TypeError(f"Prompt '{prompt_id}' field 'messages' must be a list")
             if not prompt["messages"]:
                 raise ValueError(
                     f"Prompt '{prompt_id}' field 'messages' must not be empty"
                 )
             for msg_idx, msg in enumerate(prompt["messages"]):
                 if not isinstance(msg, dict):
-                    raise ValueError(
+                    raise TypeError(
                         f"Prompt '{prompt_id}' message at index {msg_idx} must be a dict"
                     )
                 if "role" not in msg or "content" not in msg:
@@ -129,7 +129,7 @@ def load_llm_prompts(
                     )
 
         if "options" in prompt and not isinstance(prompt["options"], dict):
-            raise ValueError(
+            raise TypeError(
                 f"Prompt '{prompt_id}' field 'options' must be a dictionary"
             )
 
@@ -151,7 +151,7 @@ def load_llm_prompts(
 
 def load_llm_models(
     models_path: str = "config/llm_models.yaml",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Load and validate models from the models configuration file.
 
@@ -169,6 +169,7 @@ def load_llm_models(
         FileNotFoundError: If the models file doesn't exist
         yaml.YAMLError: If the YAML is invalid
         ValueError: If model validation fails
+        TypeError: If a value has the wrong type (e.g. not a dict or list)
     """
     models_file = Path(models_path)
 
@@ -179,18 +180,18 @@ def load_llm_models(
         models = yaml.safe_load(f)
 
     if not isinstance(models, list):
-        raise ValueError("Models file must contain a YAML list")
+        raise TypeError("Models file must contain a YAML list")
 
     # Validate each model
     for i, model in enumerate(models):
         if not isinstance(model, dict):
-            raise ValueError(f"Model at index {i} must be a dictionary")
+            raise TypeError(f"Model at index {i} must be a dictionary")
 
         if "name" not in model:
             raise ValueError(f"Model at index {i} missing required 'name' field")
 
         if "options" in model and not isinstance(model["options"], dict):
-            raise ValueError(
+            raise TypeError(
                 f"Model '{model.get('name', i)}' field 'options' must be a dictionary"
             )
 
@@ -199,7 +200,7 @@ def load_llm_models(
 
 def load_image_models(
     models_path: str = "config/image_models.yaml",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Load and validate image models from the models configuration file.
 
@@ -221,6 +222,7 @@ def load_image_models(
         FileNotFoundError: If the models file doesn't exist
         yaml.YAMLError: If the YAML is invalid
         ValueError: If model validation fails
+        TypeError: If a value has the wrong type (e.g. not a dict or list)
     """
     models_file = Path(models_path)
 
@@ -231,12 +233,12 @@ def load_image_models(
         models = yaml.safe_load(f)
 
     if not isinstance(models, list):
-        raise ValueError("Models file must contain a YAML list")
+        raise TypeError("Models file must contain a YAML list")
 
     # Validate each model
     for i, model in enumerate(models):
         if not isinstance(model, dict):
-            raise ValueError(f"Model at index {i} must be a dictionary")
+            raise TypeError(f"Model at index {i} must be a dictionary")
 
         if "name" not in model:
             raise ValueError(f"Model at index {i} missing required 'name' field")
@@ -248,7 +250,7 @@ def load_image_models(
             )
 
         if not isinstance(model["init_options"], dict):
-            raise ValueError(
+            raise TypeError(
                 f"Model '{model.get('name', i)}' field 'init_options' must be a dictionary"
             )
 
@@ -256,7 +258,7 @@ def load_image_models(
         if "generation_options" in model and not isinstance(
             model["generation_options"], dict
         ):
-            raise ValueError(
+            raise TypeError(
                 f"Model '{model.get('name', i)}' field 'generation_options' must be a dictionary"
             )
 
@@ -265,7 +267,7 @@ def load_image_models(
 
 def load_image_prompts(
     prompts_path: str = "config/image_prompts.yaml",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Load and validate image prompts from the prompts configuration file.
 
@@ -285,6 +287,7 @@ def load_image_prompts(
         FileNotFoundError: If the prompts file doesn't exist
         yaml.YAMLError: If the YAML is invalid
         ValueError: If prompt validation fails
+        TypeError: If a value has the wrong type (e.g. not a dict or list)
     """
     prompts_file = Path(prompts_path)
 
@@ -295,7 +298,7 @@ def load_image_prompts(
         prompts = yaml.safe_load(f)
 
     if not isinstance(prompts, list):
-        raise ValueError("Prompts file must contain a YAML list")
+        raise TypeError("Prompts file must contain a YAML list")
 
     # Validate prompt IDs and mode
     prompt_id_pattern = re.compile(r"^[a-z0-9_]+$")
@@ -303,7 +306,7 @@ def load_image_prompts(
 
     for i, prompt in enumerate(prompts):
         if not isinstance(prompt, dict):
-            raise ValueError(f"Prompt at index {i} must be a dictionary")
+            raise TypeError(f"Prompt at index {i} must be a dictionary")
 
         if "id" not in prompt:
             raise ValueError(f"Prompt at index {i} missing required 'id' field")
@@ -339,7 +342,7 @@ def load_image_prompts(
             raise ValueError(f"Prompt '{prompt_id}' missing required 'options' field")
 
         if not isinstance(prompt["options"], dict):
-            raise ValueError(
+            raise TypeError(
                 f"Prompt '{prompt_id}' field 'options' must be a dictionary"
             )
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.5] - 2026-10-13
+
+### Image models
+- Added FLUX.2 Klein 4B entries: `flux-2-klein-4b` (stock bf16 safetensors) and the Unsloth GGUF
+  quants `flux-2-klein-4b-Q4_K_M`, `-Q6_K` and `-Q8_0`, all with the Qwen3-4B text encoder.
+- Added `flux-2-klein-9b-Q4_K_M`, `flux-2-klein-9b-kv-merge-Q8_0` and `-Q5_K`, and
+  `pGGUFSNOFSSexNudesAndOther_v14Distilled_pruned_q5KM`.
+- Klein entries no longer set `keep_vae_on_cpu` or `guidance` (the OOM workaround costs ~8s per image,
+  and `guidance` has no effect on Klein). `sd3.5_medium` now sets `keep_clip_on_cpu: true`, which it
+  needs even at 512x512.
+- Moved the shared `lora_model_dir` out of the individual entries into `image_init_defaults`.
+- Tidied comments on the Klein 9B and Qwen-Image-2.1 entries.
+
+### Config
+- New `image_init_defaults` in `config.yaml`: defaults merged underneath every model's
+  `init_options` (a model's own value wins), passed to `initialize_stable_diffusion(model, init_defaults)`.
+- An empty `image_generation_custom:` key (loaded as `None`) no longer crashes `run_image_eval()`.
+- Type-check failures while loading config files (a file, entry or option that is not a dict/list)
+  now raise `TypeError` instead of `ValueError`, as ruff TRY004 requires. Missing or invalid values
+  still raise `ValueError`.
+
+### Tooling
+- `make lint` / `make fmt` now cover the whole repo (`.`); added `make ruff-fix`.
+- Ruff and black clean: `typing.Dict`/`List` replaced with built-in generics, imports sorted, and
+  `scripts/patch_gguf_head_dim.py` made executable.
+
+### Docs
+- `dev-notes.md`: added FLUX.2 Klein notes for a 16GB card (memory flags, LoRAs, speed, the Qwen-Image-Edit
+  offload requirement) and the `image_init_defaults` section.
+
+### Tests
+- Added tests for `init_defaults` precedence and non-mutation, `image_init_defaults` passthrough in
+  `run_image_eval()`, and the empty `image_generation_custom` case.
+
 ## [0.1.4] - 2026-10-09
 
 ### Image models

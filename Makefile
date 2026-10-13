@@ -1,10 +1,13 @@
-.PHONY: fmt lint check black ruff
+.PHONY: fmt lint check black ruff ruff-fix
 
 fmt:
-	black src/ tests/ examples/ scripts/
+	black .
 
 lint:
-	ruff check src/ tests/ examples/ scripts/
+	ruff check .
+
+ruff-fix:
+	ruff check --fix .
 
 check: fmt lint
 black: fmt
