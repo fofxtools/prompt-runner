@@ -1,63 +1,41 @@
-# Each image prompt must have:
-# - id: lowercase alphanumeric + underscore only
-# - mode: txt2img | img2img
-#
-# Options are native sd-server request fields (see stable-diffusion.cpp/examples/server/api.md):
-# - prompt: string or block
+# A list of prompts. Each has:
+# - id: unique, filename-safe (letters, digits, "_", ".", "-")
+# - prompt: the prompt text
+# plus any native sd-server request fields (see stable-diffusion.cpp/examples/server/api.md):
 # - negative_prompt: string or block
 # - sample_params: {sample_steps, guidance: {txt_cfg}} (merged with the model's)
 # - seed: int (-1 for random)
 # - batch_count: int (number of images to generate; default: 1)
-# - lora: [{path, multiplier}]
+# - lora: [{path, multiplier}] (path is the file name with extension, in --lora-model-dir, e.g. klein_snofs_v1_4.safetensors)
 #
-# Img2img-only options (file paths, sent to the server as base64):
+# Img2img / edit fields (file paths, sent to the server as base64):
 # - init_image: path to input image
 # - strength: float (0.0–1.0)
 # - mask_image: path to mask
 # - ref_images: [paths] (edit models such as Qwen-Image-Edit)
 
-# ============================================================
-# TXT2IMG PROMPTS
-# ============================================================
+- id: cute_cat
+  prompt: A cute fluffy cat sitting on a windowsill, soft daylight, cozy atmosphere.
 
-- id: cute_cat_txt2img
-  mode: txt2img
-  options:
-    prompt: A cute fluffy cat sitting on a windowsill, soft daylight, cozy atmosphere.
+- id: cyberpunk_city
+  prompt: |
+    A futuristic cyberpunk city at night with neon lights,
+    rain-soaked streets, flying cars, cinematic lighting.
 
-- id: cyberpunk_city_txt2img
-  mode: txt2img
-  options:
-    prompt: |
-      A futuristic cyberpunk city at night with neon lights,
-      rain-soaked streets, flying cars, cinematic lighting.
+- id: fantasy_knight
+  prompt: A heroic medieval knight standing in a sunlit field, epic fantasy art.
+  negative_prompt: |
+    blurry, low resolution, extra limbs, distorted anatomy
 
-- id: fantasy_knight_txt2img
-  mode: txt2img
-  options:
-    prompt: A heroic medieval knight standing in a sunlit field, epic fantasy art.
-    negative_prompt: |
-      blurry, low resolution, extra limbs, distorted anatomy
+- id: character_variations
+  prompt: A young wizard with a staff, fantasy character concept art.
+  batch_count: 4
 
-- id: character_variations_txt2img
-  mode: txt2img
-  options:
-    prompt: A young wizard with a staff, fantasy character concept art.
-    batch_count: 4
+- id: cat_refinement
+  prompt: A cute fluffy cat with more detailed fur and realistic lighting.
+  init_image: assets/input/cat.jpg
+  strength: 0.7
 
-# ============================================================
-# IMG2IMG PROMPTS
-# ============================================================
-
-- id: cat_refinement_img2img
-  mode: img2img
-  options:
-    prompt: A cute fluffy cat with more detailed fur and realistic lighting.
-    init_image: assets/input/cat.jpg
-    strength: 0.7
-
-- id: painting_to_photorealistic_img2img
-  mode: img2img
-  options:
-    prompt: Make this painting photorealistic.
-    init_image: assets/input/mona_lisa.jpg
+- id: painting_to_photorealistic
+  prompt: Make this painting photorealistic.
+  init_image: assets/input/mona_lisa.jpg

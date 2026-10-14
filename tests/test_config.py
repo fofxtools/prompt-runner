@@ -251,45 +251,63 @@ class TestLoadImagePrompts:
     """Tests for load_image_prompts function."""
 
     def test_load_valid_prompts(self, tmp_path):
-        """Test loading valid image prompts."""
+        """Prompts are flat: id, prompt and any other request fields."""
         prompts_file = tmp_path / "image_prompts.yaml"
         prompts_file.write_text("""
-- id: cute_cat_txt2img
-  mode: txt2img
-  options:
-    prompt: A cute fluffy cat
+- id: cute_cat
+  prompt: A cute fluffy cat
 - id: cat_img2img
-  mode: img2img
-  options:
-    prompt: A refined cat image
-    init_image: assets/input/cat.jpg
-    strength: 0.7
-    seed: 42
+  prompt: A refined cat image
+  init_image: assets/input/cat.jpg
+  strength: 0.7
+  sample_params: {sample_steps: 8}
 """)
         prompts = load_image_prompts(str(prompts_file))
         assert len(prompts) == 2
-        assert prompts[0]["id"] == "cute_cat_txt2img"
-        assert prompts[0]["mode"] == "txt2img"
-        assert prompts[0]["options"]["prompt"] == "A cute fluffy cat"
-        assert prompts[1]["id"] == "cat_img2img"
-        assert prompts[1]["mode"] == "img2img"
-        assert prompts[1]["options"]["strength"] == 0.7
-        assert prompts[1]["options"]["init_image"] == "assets/input/cat.jpg"
+        assert prompts[0] == {"id": "cute_cat", "prompt": "A cute fluffy cat"}
+        assert prompts[1]["strength"] == 0.7
+        assert prompts[1]["init_image"] == "assets/input/cat.jpg"
+        assert prompts[1]["sample_params"] == {"sample_steps": 8}
+
+    def test_json_file(self, tmp_path):
+        """JSON is valid YAML, so a prompts.json works."""
+        prompts_file = tmp_path / "prompts.json"
+        prompts_file.write_text('[{"id": "hotdog-1", "prompt": "A hot dog"}]')
+        assert load_image_prompts(str(prompts_file)) == [
+            {"id": "hotdog-1", "prompt": "A hot dog"}
+        ]
 
     def test_missing_file(self):
         """Test that missing file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             load_image_prompts("nonexistent.yaml")
 
-    def test_invalid_prompt_id(self, tmp_path):
-        """Test that invalid prompt ID raises ValueError."""
+    def test_not_a_list(self, tmp_path):
         prompts_file = tmp_path / "image_prompts.yaml"
-        prompts_file.write_text("""
-- id: Invalid-ID
-  mode: txt2img
-  prompt: test
-""")
-        with pytest.raises(ValueError):
+        prompts_file.write_text("id: x\nprompt: y\n")
+        with pytest.raises(TypeError, match="must contain a list"):
+            load_image_prompts(str(prompts_file))
+
+    def test_prompt_must_be_a_dict(self, tmp_path):
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text("- just a string\n")
+        with pytest.raises(TypeError, match="must be a dictionary"):
+            load_image_prompts(str(prompts_file))
+
+    @pytest.mark.parametrize(
+        "bad_id", ["has space", "../escape", "-leading", "a/b", ""]
+    )
+    def test_invalid_prompt_id(self, tmp_path, bad_id):
+        """IDs end up in filenames, so path characters and spaces are rejected."""
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text(f'- id: "{bad_id}"\n  prompt: test\n')
+        with pytest.raises(ValueError, match="invalid"):
+            load_image_prompts(str(prompts_file))
+
+    def test_missing_id(self, tmp_path):
+        prompts_file = tmp_path / "image_prompts.yaml"
+        prompts_file.write_text("- prompt: test\n")
+        with pytest.raises(ValueError, match="missing required 'id'"):
             load_image_prompts(str(prompts_file))
 
     def test_duplicate_prompt_id(self, tmp_path):
@@ -297,42 +315,15 @@ class TestLoadImagePrompts:
         prompts_file = tmp_path / "image_prompts.yaml"
         prompts_file.write_text("""
 - id: test_id
-  mode: txt2img
   prompt: first
 - id: test_id
-  mode: txt2img
   prompt: second
 """)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Duplicate"):
             load_image_prompts(str(prompts_file))
 
-    def test_missing_mode_field(self, tmp_path):
-        """Test that missing mode field raises ValueError."""
+    def test_missing_prompt(self, tmp_path):
         prompts_file = tmp_path / "image_prompts.yaml"
-        prompts_file.write_text("""
-- id: test_id
-  prompt: test
-""")
-        with pytest.raises(ValueError):
-            load_image_prompts(str(prompts_file))
-
-    def test_invalid_mode(self, tmp_path):
-        """Test that invalid mode raises ValueError."""
-        prompts_file = tmp_path / "image_prompts.yaml"
-        prompts_file.write_text("""
-- id: test_id
-  mode: invalid_mode
-  prompt: test
-""")
-        with pytest.raises(ValueError):
-            load_image_prompts(str(prompts_file))
-
-    def test_missing_required_field(self, tmp_path):
-        """Test that missing required field raises ValueError."""
-        prompts_file = tmp_path / "image_prompts.yaml"
-        prompts_file.write_text("""
-- id: test_id
-  mode: txt2img
-""")
-        with pytest.raises(ValueError):
+        prompts_file.write_text("- id: test_id\n  negative_prompt: x\n")
+        with pytest.raises(ValueError, match="missing required 'prompt'"):
             load_image_prompts(str(prompts_file))

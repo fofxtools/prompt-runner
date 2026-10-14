@@ -1,6 +1,7 @@
 """Utility functions for the evals project."""
 
 import copy
+import json
 import re
 import secrets
 from datetime import datetime, timezone
@@ -158,3 +159,10 @@ def merge_image_options(*layers: dict[str, Any] | None) -> dict[str, Any]:
             else:
                 merged[key] = copy.deepcopy(value)
     return merged
+
+
+def append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    """Append one JSON line to a JSONL file (created with its parent folder if needed)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")

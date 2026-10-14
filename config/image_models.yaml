@@ -52,6 +52,25 @@
   server_args:
     --model: /home/shared/ai/diffusion/checkpoints/juggernautXL_ragnarokBy.safetensors
 
+# Juggernaut XL v9 Lightning (single-file checkpoint, VAE and text encoders included).
+# https://huggingface.co/RunDiffusion/Juggernaut-XL-Lightning
+# Model card: DPM++ SDE Karras, 5-7 steps, CFG 1.5-2.0, at least 1024x1024. sd.cpp has no plain DPM++ SDE;
+# dpm++2m_sde needs the karras scheduler (without it the images are full of colored noise).
+- name: Juggernaut_RunDiffusionPhoto2_Lightning_4Steps
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/Juggernaut_RunDiffusionPhoto2_Lightning_4Steps.safetensors
+  generation_options:
+    sample_params: {sample_method: dpm++2m_sde, scheduler: karras, sample_steps: 6, guidance: {txt_cfg: 1.8}}
+
+# Juggernaut XI Lightning (single-file checkpoint, VAE and text encoders included). License: CC BY-NC-ND 4.0 (no commercial use).
+# https://huggingface.co/RunDiffusion/Juggernaut-XI-Lightning
+# Model card: same settings as above.
+- name: Juggernaut-XI-byRunDiffusion-Lightning
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/Juggernaut-XI-byRunDiffusion-Lightning.safetensors
+  generation_options:
+    sample_params: {sample_method: dpm++2m_sde, scheduler: karras, sample_steps: 6, guidance: {txt_cfg: 1.8}}
+
 - name: meinamix_v12Final
   server_args:
     --model: /home/shared/ai/diffusion/checkpoints/meinamix_v12Final.safetensors
@@ -76,6 +95,7 @@
   server_args:
     --model: /home/shared/ai/diffusion/checkpoints/LahCuteCartoonSDXL_alpha.safetensors
 
+# SDXL is trained at 1024x1024; use about that size (set width/height, or --size 1024).
 - name: sd_xl_base_1.0
   server_args:
     --model: /home/shared/ai/diffusion/checkpoints/sd_xl_base_1.0.safetensors
@@ -83,8 +103,6 @@
     --clip_g: /home/shared/ai/text_encoders/clip_g.safetensors
     --vae: /home/shared/ai/vae/sdxl.vae.safetensors
   generation_options:
-    width: 1024
-    height: 1024
     sample_params: {sample_steps: 25, guidance: {txt_cfg: 6.0}}
 
 - name: sd3.5_medium
@@ -97,6 +115,8 @@
   generation_options:
     sample_params: {sample_steps: 20, guidance: {txt_cfg: 4.5}}
 
+# Use about 1024x1024 (set width/height, or --size 1024): at 512x512 the images have block and line artifacts, at 640-768 text and
+# fine detail get garbled.
 - name: sd3.5_large_turbo-Q5_1
   server_args:
     --diffusion-model: /home/shared/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
@@ -239,9 +259,31 @@
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
-# FLUX.2 Klein 9B SNOFS. Converted from the original fp8 safetensors (which
-# stable-diffusion.cpp upconverts to F16 at load - 17.3GB, bigger than a
-# 16GB card's entire VRAM) to Q5_K GGUF via `sd-cli -M convert`.
+# FLUX.2 Klein 9B SNOFS, the original fp8 safetensors (9GB). The current sd.cpp keeps fp8 weights at one byte each (8.7GB in
+# VRAM), but casts each layer to bf16 while running, so it is ~2x slower than the Q5_K entry below (1024x1024: 9s vs 4s, with LoRA 15s vs 7.5s).
+# https://civitai.red/models/2416142/snofs-sex-nudes-and-other-fun-stuff-merged?modelVersionId=2985440
+- name: snofsSexNudesAndOther_v14Klein9bDistilled_full_fp8
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_fp8.safetensors
+    --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
+  generation_options:
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
+
+# FLUX.2 Klein 9B SNOFS. Converted from the original fp8 safetensors to Q6_K GGUF via `sd-cli -M convert`.
+# https://civitai.red/models/2416142/snofs-sex-nudes-and-other-fun-stuff-merged?modelVersionId=2985440
+- name: snofsSexNudesAndOther_v14Klein9bDistilled_full_Q6_K
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q6_K.gguf
+    --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
+  generation_options:
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
+
+# FLUX.2 Klein 9B SNOFS. Converted from the original fp8 safetensors to Q5_K GGUF via `sd-cli -M convert`
+# (same quality, about twice as fast as the fp8 entry above).
 # https://civitai.red/models/2416142/snofs-sex-nudes-and-other-fun-stuff-merged?modelVersionId=2985440
 - name: snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K
   server_args:

@@ -266,23 +266,23 @@ def load_image_prompts(
     prompts_path: str = "config/image_prompts.yaml",
 ) -> list[dict[str, Any]]:
     """
-    Load and validate image prompts from the prompts configuration file.
+    Load and validate image prompts from a YAML or JSON file.
 
-    Each prompt must have:
-    - id: string matching regex ^[a-z0-9_]+$
-    - mode: "txt2img" or "img2img"
-    - options: dict of native sd-server request fields (prompt, negative_prompt,
-      seed, batch_count, sample_params, init_image, etc.)
+    The file must contain a list where each prompt has:
+    - id: filename-safe string (letters, digits, "_", ".", "-"), unique
+    - prompt: the prompt text
+    - any other native sd-server request field (negative_prompt, seed,
+      sample_params, init_image, strength, lora, etc.), passed through as-is
 
     Args:
-        prompts_path: Path to the image_prompts.yaml file (default: config/image_prompts.yaml)
+        prompts_path: Path to the prompts file (default: config/image_prompts.yaml)
 
     Returns:
         List of prompt dictionaries
 
     Raises:
         FileNotFoundError: If the prompts file doesn't exist
-        yaml.YAMLError: If the YAML is invalid
+        yaml.YAMLError: If the file is invalid
         ValueError: If prompt validation fails
         TypeError: If a value has the wrong type (e.g. not a dict or list)
     """
@@ -292,13 +292,12 @@ def load_image_prompts(
         raise FileNotFoundError(f"Prompts file not found: {prompts_path}")
 
     with open(prompts_file, "r") as f:
-        prompts = yaml.safe_load(f)
+        prompts = yaml.safe_load(f)  # JSON is valid YAML
 
     if not isinstance(prompts, list):
-        raise TypeError("Prompts file must contain a YAML list")
+        raise TypeError("Prompts file must contain a list")
 
-    # Validate prompt IDs and mode
-    prompt_id_pattern = re.compile(r"^[a-z0-9_]+$")
+    prompt_id_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     seen_ids = set()
 
     for i, prompt in enumerate(prompts):
@@ -310,37 +309,18 @@ def load_image_prompts(
 
         prompt_id = prompt["id"]
 
-        # Validate ID format
-        if not prompt_id_pattern.match(prompt_id):
+        if not isinstance(prompt_id, str) or not prompt_id_pattern.match(prompt_id):
             raise ValueError(
                 f"Prompt ID '{prompt_id}' is invalid. "
-                f"Must match pattern: ^[a-z0-9_]+$"
+                f"Must match pattern: ^[A-Za-z0-9][A-Za-z0-9_.-]*$"
             )
 
-        # Check for duplicates
         if prompt_id in seen_ids:
             raise ValueError(f"Duplicate prompt ID found: '{prompt_id}'")
 
         seen_ids.add(prompt_id)
 
-        # Validate mode
-        if "mode" not in prompt:
-            raise ValueError(f"Prompt '{prompt_id}' missing required 'mode' field")
-
-        mode = prompt["mode"]
-        if mode not in ("txt2img", "img2img"):
-            raise ValueError(
-                f"Prompt '{prompt_id}' has invalid mode '{mode}'. "
-                f"Must be 'txt2img' or 'img2img'"
-            )
-
-        # Validate options field (required)
-        if "options" not in prompt:
-            raise ValueError(f"Prompt '{prompt_id}' missing required 'options' field")
-
-        if not isinstance(prompt["options"], dict):
-            raise TypeError(
-                f"Prompt '{prompt_id}' field 'options' must be a dictionary"
-            )
+        if "prompt" not in prompt:
+            raise ValueError(f"Prompt '{prompt_id}' missing required 'prompt' field")
 
     return prompts

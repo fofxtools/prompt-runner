@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.2.1] - 2026-10-14
+
+Image generation now takes an explicit list of jobs instead of the config-driven `run_image_eval()`. This is a breaking change.
+
+### Image runner
+- New `run_jobs(jobs, binary=..., out_dir=...)`. A `Job` is a model entry, the request fields for one image, the output path and
+  free-form `tags`. You build the list (your own matrix, your own file names); jobs are grouped so each model loads once.
+- Every attempt is appended to `out_dir/runs.jsonl`, one line per image, as it happens (so a crash loses nothing): model,
+  seed, exact request, server flags, sd.cpp version, time, tags. Failed and skipped jobs get a line too. `write_log=False` turns it off.
+- `skip_existing=True` skips jobs whose output file exists, so a rerun resumes. Duplicate output paths are rejected up front.
+- Input images stay where they are and are logged as the given paths (no copy into the output folder).
+- Removed `run_image_eval()`, `save_image_summary`, the per-run folder layout (`image/<prompt>/`, `summary.json`, `inputs/`),
+  the per-image JSON files and the `mode` filter.
+
+### Prompts
+- Prompt files are now a flat list of `{id, prompt, <any request field>}` (YAML or JSON), no `mode` and no nested `options`.
+  An id may be any filename-safe string (so `hotdog-1` works). `config/image_prompts.yaml` is rewritten as an example.
+
+### Added
+- `prompt_runner.sheets.make_sheet()`: labelled contact sheets for comparing models, LoRAs, seeds. Needs Pillow
+  (`pip install "prompt-runner[sheets]"`).
+- `scripts/run_images.py`: prompts x seeds x models from the command line, with a comparison sheet.
+
+### Image models
+- Added `Juggernaut_RunDiffusionPhoto2_Lightning_4Steps` and `Juggernaut-XI-byRunDiffusion-Lightning` (6 steps, `dpm++2m_sde` with
+  the `karras` scheduler, cfg 1.8; the two look the same in blind tests).
+- Added `snofsSexNudesAndOther_v14Klein9bDistilled_full_fp8` (the original fp8 file: fits in 8.7 GB, same quality, about twice as
+  slow as the Q5_K) and `..._full_Q6_K` (converted with `sd-cli -M convert`).
+- Noted in `sd3.5_large_turbo-Q5_1` that it needs about 1024x1024; at 512-768 it has artifacts and garbled detail.
+- `sd_xl_base_1.0` no longer forces 1024x1024, so the config default and `--size` apply to it like every other model.
+
+### Tests
+- Replaced the `run_image_eval` tests with tests for grouping, the failure policy, resume, the log rows and the new prompt loader;
+  added tests for the sheets. The real-GPU smoke test now uses `run_jobs`.
+
 ## [0.2.0] - 2026-10-14
 
 Image generation now runs through stable-diffusion.cpp's `sd-server` instead of the `stable-diffusion-cpp-python` binding.
