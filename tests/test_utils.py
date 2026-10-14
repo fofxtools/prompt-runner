@@ -213,3 +213,25 @@ class TestMergeImageOptions:
         assert result["sample_steps"] == 6  # From model
         assert result["cfg_scale"] == 3.5  # Overridden by prompt
         assert result["seed"] == 42  # From prompt
+
+    def test_nested_mappings_merge_and_lists_replace(self):
+        """Mappings merge key by key; lists and scalars are replaced."""
+        global_opts = {"sample_params": {"sample_steps": 4, "scheduler": "discrete"}}
+        model_opts = {"sample_params": {"sample_steps": 20}, "lora": [{"path": "a"}]}
+        prompt_opts = {"lora": [{"path": "b", "multiplier": 0.5}]}
+        result = merge_image_options(global_opts, model_opts, prompt_opts)
+
+        assert result["sample_params"] == {"sample_steps": 20, "scheduler": "discrete"}
+        assert result["lora"] == [{"path": "b", "multiplier": 0.5}]
+
+    def test_result_shares_no_state_with_inputs(self):
+        """Mutating the result must not change the inputs."""
+        model_opts = {"sample_params": {"sample_steps": 4}, "lora": [{"path": "a"}]}
+        result = merge_image_options(None, model_opts, None)
+        result["sample_params"]["sample_steps"] = 99
+        result["lora"].append({"path": "b"})
+
+        assert model_opts == {
+            "sample_params": {"sample_steps": 4},
+            "lora": [{"path": "a"}],
+        }

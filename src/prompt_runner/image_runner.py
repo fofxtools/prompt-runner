@@ -1,19 +1,22 @@
 """Image generation runner logic."""
 
+import base64
 import json
+import secrets
+import shutil
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from PIL import Image
-from stable_diffusion_cpp import StableDiffusion
-
+from .sdcpp_server import SdCppError, SdCppServer, engine_version
 from .utils import (
     create_result_structure,
     generate_run_identifiers,
     merge_image_options,
     sanitize_fs_name,
 )
+
+MAX_SEED = 2**31 - 1
 
 
 def save_image_summary(
@@ -24,6 +27,8 @@ def save_image_summary(
     prompts: list[dict[str, Any]],
     models: list[dict[str, Any]],
     model_timings: dict[str, float],
+    engine: str,
+    failures: list[dict[str, Any]],
 ) -> None:
     """
     Save the run summary metadata to summary.json.
@@ -36,6 +41,9 @@ def save_image_summary(
         prompts: List of prompt dictionaries
         models: List of model dictionaries
         model_timings: Dict mapping model names to elapsed time in seconds
+            (server start and model load included)
+        engine: The sd-server version string
+        failures: One dict per failure (model, prompt, kind, error, exit_code, log)
 
     Raises:
         FileNotFoundError: If the run directory does not exist
@@ -56,11 +64,13 @@ def save_image_summary(
         "run_id": run_id,
         "created_at": created_at,
         "image": {
+            "engine": engine,
             "prompt_count": len(prompts),
             "model_count": len(models),
             "prompts": prompt_ids,
             "models": model_names,
             "model_timings": model_timings,
+            "failures": failures,
         },
     }
 
@@ -69,127 +79,72 @@ def save_image_summary(
         json.dump(summary, f, indent=2)
 
 
-def initialize_stable_diffusion(
-    model_config: dict[str, Any],
-    init_defaults: dict[str, Any] | None = None,
-) -> StableDiffusion:
+def record_failure(
+    failures: list[dict[str, Any]],
+    model_name: str,
+    prompt_id: str | None,
+    error: SdCppError,
+    log: str,
+) -> None:
+    """Print a failure and append it to the run's failure list (prompt_id None = server start)."""
+    print(f"    FAILED ({error.kind}): {error.message}")
+    failures.append(
+        {
+            "model": model_name,
+            "prompt": prompt_id,
+            "kind": error.kind,
+            "error": error.message,
+            "exit_code": error.exit_code,
+            "log": log,
+        }
+    )
+
+
+def prepare_request(
+    options: dict[str, Any], inputs_dir: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """
-    Initialize a StableDiffusion instance from model configuration.
+    Resolve the seed and inline the input images of a native request.
 
-    Extracts all parameters from model_config["init_options"] and passes them
-    to StableDiffusion. The "name" and "generation_options" fields are excluded.
-
-    All init_options are passed through as-is. StableDiffusion will validate
-    and fail fast if invalid. Optional init_defaults (config.yaml
-    image_init_defaults) are applied underneath: a model's own init_options win.
+    `init_image`, `mask_image` and `ref_images` are file paths in the config.
+    Each is copied into inputs_dir and sent to the server as base64.
 
     Args:
-        model_config: Model configuration dictionary.
-            - "name": model identifier (excluded, metadata only)
-            - "init_options": dict containing StableDiffusion initialization parameters
-              (diffusion_model_path, model_path, clip_l_path, vae_path,
-              keep_clip_on_cpu, vae_decode_only, etc.)
-            - "generation_options": (excluded, used during generation)
-        init_defaults: Optional defaults for init_options shared by all models
-            (e.g. lora_model_dir). Overridden by the model's init_options.
+        options: The merged request fields (not modified)
+        inputs_dir: Where input files are copied to (run_dir/inputs/<prompt_id>)
 
     Returns:
-        Initialized StableDiffusion instance
+        (request, recorded): the request to send, and the same request with the
+        images replaced by their file names relative to the run directory.
 
     Raises:
-        TypeError: If StableDiffusion receives invalid parameters (fail-fast)
-
-    Examples:
-        >>> config = {
-        ...     "name": "flux1-schnell",
-        ...     "init_options": {
-        ...         "diffusion_model_path": "/path/to/model.gguf",
-        ...         "clip_l_path": "/path/to/clip_l.safetensors",
-        ...         "keep_clip_on_cpu": True
-        ...     },
-        ...     "generation_options": {
-        ...         "cfg_scale": 1.0,
-        ...         "sample_steps": 6
-        ...     }
-        ... }
-        >>> sd = initialize_stable_diffusion(config)
+        OSError: If an input file cannot be read
     """
-    # Extract init_options (StableDiffusion initialization parameters)
-    if "init_options" not in model_config:
-        raise ValueError(
-            f"Model '{model_config.get('name', 'unknown')}' missing 'init_options' field"
-        )
+    recorded = dict(options)
+    seed = options.get("seed")
+    if seed is None or seed == -1:
+        recorded["seed"] = secrets.randbelow(MAX_SEED)
+    request = dict(recorded)
 
-    # Pass all init_options to StableDiffusion
-    # Let StableDiffusion validate parameters and fail fast if invalid
-    return StableDiffusion(**{**(init_defaults or {}), **model_config["init_options"]})
+    def inline(key: str, path: str, suffix: str = "") -> tuple[str, str]:
+        src = Path(path)
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        dest = inputs_dir / f"{key}{suffix}_{src.name}"
+        shutil.copyfile(src, dest)
+        relative = f"inputs/{inputs_dir.name}/{dest.name}"
+        return base64.b64encode(dest.read_bytes()).decode(), relative
 
-
-def generate_image(
-    sd: StableDiffusion,
-    model_config: dict[str, Any],
-    prompt_config: dict[str, Any],
-    options: dict[str, Any],
-) -> list[Image.Image]:
-    """
-    Generate image(s) using a StableDiffusion instance.
-
-    This function is a thin pass-through layer over
-    stable-diffusion-cpp-python. All StableDiffusion parameters
-    (including prompt text, batching, and generation options)
-    must be provided via prompt_config["options"] and options.
-
-    Orchestration-only fields such as "id" and "mode" are not
-    passed to StableDiffusion.
-
-    No validation or whitelisting is performed here.
-    StableDiffusion is expected to validate parameters and
-    fail fast if invalid.
-
-    Args:
-        sd: Initialized StableDiffusion instance
-        model_config: Model configuration dictionary (unused; kept for symmetry)
-        prompt_config: Prompt configuration dictionary containing an "options" dict
-        options: Global / merged generation defaults
-
-    Returns:
-        List of generated PIL Image objects
-    """
-    params = dict(options)
-    params.update(prompt_config["options"])
-
-    return cast(list[Image.Image], sd.generate_image(**params))
-
-
-def generate_image_with_settings(
-    sd: StableDiffusion,
-    model_config: dict[str, Any],
-    prompt_config: dict[str, Any],
-    options: dict[str, Any],
-    custom_options: dict[str, Any],
-) -> list[Image.Image]:
-    """
-    Apply custom settings and generate image(s).
-
-    Applies prompt_prefix from custom_options, then delegates to generate_image().
-
-    Args:
-        sd: Initialized StableDiffusion instance
-        model_config: Model configuration dictionary
-        prompt_config: Prompt configuration dictionary containing an "options" dict
-        options: Merged generation options
-        custom_options: Custom options from image_generation_custom config
-
-    Returns:
-        List of generated PIL Image objects
-    """
-    prompt_prefix = custom_options.get("prompt_prefix", "")
-    if prompt_prefix and "prompt" in prompt_config.get("options", {}):
-        prompt_config["options"]["prompt"] = (
-            prompt_prefix + prompt_config["options"]["prompt"]
-        )
-
-    return generate_image(sd, model_config, prompt_config, options)
+    for key in ("init_image", "mask_image"):
+        if options.get(key):
+            request[key], recorded[key] = inline(key, options[key])
+    if options.get("ref_images"):
+        pairs = [
+            inline("ref_images", path, f"_{i}")
+            for i, path in enumerate(options["ref_images"])
+        ]
+        request["ref_images"] = [b64 for b64, _ in pairs]
+        recorded["ref_images"] = [rel for _, rel in pairs]
+    return request, recorded
 
 
 def run_image_eval(
@@ -201,8 +156,14 @@ def run_image_eval(
     """
     Run image generation evaluation across prompts and models.
 
+    Starts one sd-server per model, runs the (mode-filtered) prompts through it
+    and stops it. A failed job is recorded and the run continues; if the server
+    dies the rest of that model is skipped. Failures end up in summary.json.
+
     Args:
-        config: Configuration dictionary containing results_dir and image_generation_defaults
+        config: Configuration dictionary containing results_dir, sd_server (path
+            to the binary), and optionally image_server_args and
+            image_generation_defaults
         prompts: List of prompt configurations from image_prompts.yaml
         models: List of model configurations from image_models.yaml
         mode_filter: Filter prompts by mode ("txt2img", "img2img", or "all")
@@ -211,12 +172,20 @@ def run_image_eval(
         run_id: The unique run identifier
 
     Raises:
-        ValueError: If mode_filter is not "txt2img", "img2img", or "all"
+        ValueError: If mode_filter is invalid or config has no sd_server
     """
     if mode_filter not in ("txt2img", "img2img", "all"):
         raise ValueError(
             f"Invalid mode_filter: {mode_filter}. Must be 'txt2img', 'img2img', or 'all'"
         )
+    binary = config.get("sd_server")
+    if not binary:
+        raise ValueError(
+            "Config must contain 'sd_server' (path to the sd-server binary)"
+        )
+
+    selected = [p for p in prompts if mode_filter in ("all", p["mode"])]
+    engine = engine_version(binary)
 
     # Generate run identifiers
     run_id, run_dir_name, created_at = generate_run_identifiers()
@@ -225,87 +194,101 @@ def run_image_eval(
     # Create result directory structure
     run_path = create_result_structure(run_dir_name, results_dir)
 
-    # Get global defaults and custom options
     global_defaults = config.get("image_generation_defaults")
-    init_defaults = config.get("image_init_defaults")
-    custom_options = config.get("image_generation_custom") or {}
+    server_defaults = config.get("image_server_args")
 
-    # Track timing per model
-    model_timings = {}
+    model_timings: dict[str, float] = {}
+    failures: list[dict[str, Any]] = []
 
     # Process each model
     for model in models:
+        if not selected:
+            break  # no prompt matches the mode filter: don't start any server
         model_name = model["name"]
-        print(f"Initializing model: {model_name}")
+        sanitized_model_name = sanitize_fs_name(model_name)
+        log_path = run_path / "server_logs" / f"{sanitized_model_name}.log"
+        server_args = merge_image_options(server_defaults, model["server_args"])
+        log_rel = str(log_path.relative_to(run_path))
+        print(f"Starting server: {model_name}")
 
-        # Start timing for this model
         start_time = time.time()
+        try:
+            with SdCppServer(binary, server_args, log_path) as server:
+                for prompt in selected:
+                    prompt_id = prompt["id"]
+                    print(f"  Generating: {prompt_id} ({prompt['mode']})")
 
-        # Initialize StableDiffusion
-        sd = initialize_stable_diffusion(model, init_defaults)
+                    options = merge_image_options(
+                        global_defaults,
+                        model.get("generation_options"),
+                        prompt.get("options"),
+                    )
+                    try:
+                        request, recorded = prepare_request(
+                            options, run_path / "inputs" / prompt_id
+                        )
+                    except OSError as e:
+                        record_failure(
+                            failures,
+                            model_name,
+                            prompt_id,
+                            SdCppError("job_failed", f"input error: {e}"),
+                            log_rel,
+                        )
+                        continue
 
-        # Process each prompt
-        for prompt in prompts:
-            prompt_id = prompt["id"]
-            prompt_mode = prompt["mode"]
+                    gen_start = time.time()
+                    try:
+                        images = server.generate(request)
+                    except SdCppError as e:
+                        record_failure(failures, model_name, prompt_id, e, log_rel)
+                        if e.kind == "server_died":
+                            break
+                        continue
+                    elapsed = round(time.time() - gen_start, 3)
 
-            # Filter by mode
-            if mode_filter != "all" and prompt_mode != mode_filter:
-                continue
+                    prompt_dir = run_path / "image" / prompt_id
+                    prompt_json_dir = prompt_dir / "json"
+                    prompt_json_dir.mkdir(parents=True, exist_ok=True)
+                    for i, png in enumerate(images):
+                        img_filename = f"{sanitized_model_name}_{i}.png"
+                        (prompt_dir / img_filename).write_bytes(png)
 
-            print(f"  Generating: {prompt_id} ({prompt_mode})")
+                        # A batch uses seed, seed+1, ...
+                        metadata = {
+                            "run_id": run_id,
+                            "created_at": created_at,
+                            "mode": prompt["mode"],
+                            "model": {"name": model_name},
+                            "prompt": {"id": prompt_id},
+                            "engine": engine,
+                            "server_args": server.argv,
+                            "request": recorded,
+                            "seed": recorded["seed"] + i,
+                            "elapsed_seconds": elapsed,
+                        }
+                        json_path = prompt_json_dir / f"{sanitized_model_name}_{i}.json"
+                        with open(json_path, "w", encoding="utf-8") as f:
+                            json.dump(metadata, f, indent=2)
 
-            # Create prompt subdirectories
-            prompt_dir = run_path / "image" / prompt_id
-            prompt_json_dir = prompt_dir / "json"
-            prompt_dir.mkdir(parents=True, exist_ok=True)
-            prompt_json_dir.mkdir(parents=True, exist_ok=True)
+                        print(f"    Saved: {img_filename}")
+        except SdCppError as e:
+            # The server failed to start (or died on its way up).
+            record_failure(failures, model_name, None, e, log_rel)
 
-            # Merge generation options
-            merged_options = merge_image_options(
-                global_defaults,
-                model.get("generation_options"),
-                prompt.get("options"),
-            )
-
-            # Generate images
-            images = generate_image_with_settings(
-                sd, model, prompt, merged_options, custom_options
-            )
-
-            # Save each generated image
-            sanitized_model_name = sanitize_fs_name(model_name)
-            for i, img in enumerate(images):
-                # Save PNG
-                img_filename = f"{sanitized_model_name}_{i}.png"
-                img_path = prompt_dir / img_filename
-                img.save(img_path)
-
-                # Save metadata JSON
-                json_filename = f"{sanitized_model_name}_{i}.json"
-                json_path = prompt_json_dir / json_filename
-
-                # Build metadata with only set fields
-                metadata = {
-                    "run_id": run_id,
-                    "created_at": created_at,
-                    "mode": prompt_mode,
-                    "model": {"name": model_name},
-                    "prompt": {"id": prompt_id},
-                    "generation_options": merged_options,
-                }
-
-                with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, indent=2)
-
-                print(f"    Saved: {img_filename}")
-
-        # Record elapsed time for this model
         model_timings[model_name] = round(time.time() - start_time, 3)
 
     # Save run metadata with timings
     save_image_summary(
-        run_id, run_dir_name, created_at, results_dir, prompts, models, model_timings
+        run_id,
+        run_dir_name,
+        created_at,
+        results_dir,
+        prompts,
+        models,
+        model_timings,
+        engine,
+        failures,
     )
 
     return run_id

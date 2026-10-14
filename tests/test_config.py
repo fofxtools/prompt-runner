@@ -193,32 +193,28 @@ class TestLoadImageModels:
         models_file = tmp_path / "image_models.yaml"
         models_file.write_text("""
 - name: flux1-schnell
-  init_options:
-    diffusion_model_path: /home/shared/ai/models/flux.gguf
-    clip_l_path: /home/shared/ai/encoders/clip_l.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/models/flux.gguf
+    --clip_l: /home/shared/ai/encoders/clip_l.safetensors
+    --sage-attn: true
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 6
+    sample_params: {sample_steps: 6}
 - name: sd15
-  init_options:
-    model_path: /home/shared/ai/models/sd15.safetensors
+  server_args:
+    -m: /home/shared/ai/models/sd15.safetensors
 """)
         models = load_image_models(str(models_file))
         assert len(models) == 2
         assert models[0]["name"] == "flux1-schnell"
         assert (
-            models[0]["init_options"]["diffusion_model_path"]
+            models[0]["server_args"]["--diffusion-model"]
             == "/home/shared/ai/models/flux.gguf"
         )
-        assert (
-            models[0]["init_options"]["clip_l_path"]
-            == "/home/shared/ai/encoders/clip_l.safetensors"
-        )
-        assert models[0]["generation_options"]["cfg_scale"] == 1.0
+        assert models[0]["server_args"]["--sage-attn"] is True
+        assert models[0]["generation_options"]["sample_params"] == {"sample_steps": 6}
         assert models[1]["name"] == "sd15"
         assert (
-            models[1]["init_options"]["model_path"]
-            == "/home/shared/ai/models/sd15.safetensors"
+            models[1]["server_args"]["-m"] == "/home/shared/ai/models/sd15.safetensors"
         )
 
     def test_missing_file(self):
@@ -230,17 +226,24 @@ class TestLoadImageModels:
         """Test that missing name field raises ValueError."""
         models_file = tmp_path / "image_models.yaml"
         models_file.write_text("""
-- init_options:
-    model_path: /path/to/model
+- server_args:
+    -m: /path/to/model
 """)
         with pytest.raises(ValueError, match="missing required 'name' field"):
             load_image_models(str(models_file))
 
-    def test_missing_init_options_field(self, tmp_path):
-        """Test that missing init_options field raises ValueError."""
+    def test_missing_server_args_field(self, tmp_path):
+        """Test that missing server_args field raises ValueError."""
         models_file = tmp_path / "image_models.yaml"
         models_file.write_text("- name: test-model\n")
-        with pytest.raises(ValueError, match="missing required 'init_options' field"):
+        with pytest.raises(ValueError, match="missing required 'server_args' field"):
+            load_image_models(str(models_file))
+
+    def test_server_args_must_be_a_mapping(self, tmp_path):
+        """Test that a non-dict server_args raises TypeError."""
+        models_file = tmp_path / "image_models.yaml"
+        models_file.write_text("- name: test-model\n  server_args: [-m, x]\n")
+        with pytest.raises(TypeError, match="'server_args' must be a dictionary"):
             load_image_models(str(models_file))
 
 

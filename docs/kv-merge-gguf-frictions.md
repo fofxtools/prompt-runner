@@ -22,7 +22,7 @@ Format: what happened -> what I did -> outcome.
    stable-diffusion.cpp's pre-sized context can't take a rule that makes tensors bigger). Wanted to keep the 3 modulation
    linears BF16 (stock unsloth GGUF does; plain Q5_K quantized them). Workaround: wrote `kvconv/patch_modulation_bf16.py`
    which swaps those 3 tensors back to exact BF16 (copied from the F16 safetensors) via gguf-py, same pattern as
-   `prompt-runner/scripts/patch_gguf_head_dim.py`. Verified: the 3 are bit-exact, other 198 tensors byte-identical, then
+   `prompt-runner/scripts/patch_gguf_head_dim.py` (removed in 0.2.0; it is in git at tag v0.1.6). Verified: the 3 are bit-exact, other 198 tensors byte-identical, then
    generation OK. sd.cpp-written GGUFs have no KV metadata, so the writer is created with `arch="flux2"` only.
 
 6. **Not a friction but worth knowing:** `sd_cpp.convert()` on an 18GB F16 safetensors takes ~35s and fits in RAM

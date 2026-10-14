@@ -1,17 +1,21 @@
 # Relative path recommended (keeps results inside the project)
 results_dir: storage/results/
 
+# Absolute path to the stable-diffusion.cpp sd-server binary (no ~)
+sd_server: /home/shared/ai/stable-diffusion.cpp/build/bin/sd-server
+
 llm_generation_defaults:
   temperature: 0.2
   num_predict: -1
 
-# Applied to every model's init_options (a model's own init_options override these)
-image_init_defaults:
-  lora_model_dir: /home/shared/ai/lora
+# sd-server flags added to every model's server_args (a model's own value wins).
+# --sage-attn needs an NVIDIA GPU with compute capability 8.0+ (RTX 30xx and up); remove it on older GPUs.
+image_server_args:
+  --lora-model-dir: /home/shared/ai/lora
+  --sage-attn: true
 
+# Native sd-server request fields merged under every model's generation_options
 image_generation_defaults:
   width: 512
   height: 512
   seed: -1
-
-image_generation_custom:

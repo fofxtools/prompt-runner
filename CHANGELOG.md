@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.2.0] - 2026-10-14
+
+Image generation now runs through stable-diffusion.cpp's `sd-server` instead of the `stable-diffusion-cpp-python` binding.
+This is a breaking change to the image config files; there is no backwards compatibility.
+
+### Image runner
+- Starts one `sd-server` per model (on a free local port), sends each prompt to it, and stops it afterwards. A crash in one
+  model no longer takes down the whole run.
+- A failed prompt is recorded and the run continues; if the server dies, the rest of that model is skipped. Failures (with the
+  error, exit code and server log path) are listed in `summary.json`.
+- Seeds are chosen by the runner (`-1` or no seed picks a random one) and recorded per image. A batch uses seed, seed+1, ...
+- Input images (`init_image`, `mask_image`, `ref_images`) are copied into the run folder (`inputs/`) and sent as base64.
+- Per-image JSON now records the sd.cpp version, the full `sd-server` command line, the exact request and the elapsed time.
+  Server output goes to `server_logs/<model>.log`.
+- Images are saved as the PNG bytes the server returns, so Pillow is no longer needed.
+
+### Config (breaking)
+- `config.yaml`: new `sd_server` (absolute path to the binary) and `image_server_args` (flags for every model, now
+  `--lora-model-dir` and `--sage-attn`). Removed `image_init_defaults` and `image_generation_custom` (and with it `prompt_prefix`).
+- `image_models.yaml`: `init_options` is replaced by `server_args`, a mapping of literal sd-server flags (`true` gives a bare
+  flag, `false`/`null` drops it). `generation_options` and prompt `options` are now native sd-server request fields, for example
+  `sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}` instead of `cfg_scale`/`sample_steps`.
+- Generation options merge recursively (config defaults, then model, then prompt): mappings merge, lists and scalars replace.
+- LoRAs use the `lora: [{path, multiplier}]` list; `<lora:...>` prompt tags are no longer supported.
+- All 33 model entries were converted and kept. The memory flags for the old binding (`keep_*_on_cpu`, `offload_params_to_cpu`)
+  are gone. `--max-vram 10` is set on the Klein and Qwen-Image 2.1 entries, where it avoids out-of-memory errors on large images.
+
+### Image models
+- `qwen-image-2.1-Q4_K_M` now works (cfg 4.0, 25 steps).
+
+### Removed
+- The `stable-diffusion-cpp-python` and `pillow` dependencies, and `scripts/patch_gguf_head_dim.py` (the unpatched PornMaster
+  GGUF loads on current stable-diffusion.cpp).
+
+### Docs
+- Rewrote `cuda-setup.md` (CUDA install checked against NVIDIA's guide, stable-diffusion.cpp build, SageAttention GPU
+  requirement) and trimmed the README.
+- `dev-notes.md`: removed the notes that only applied to the Python binding; the fp8 note now uses `sd-cli -M convert`.
+
+### Tests
+- Added tests for the server wrapper (against a fake `sd-server` script), the recursive merge, and the failure handling in the
+  runner. A real-GPU smoke test is skipped by default (`pytest -m gpu`).
+
 ## [0.1.6] - 2026-10-14
 
 ### Image models

@@ -1,4 +1,12 @@
-Install CUDA:
+# CUDA setup (Ubuntu)
+
+Image generation needs the CUDA toolkit to build stable-diffusion.cpp. These steps follow NVIDIA's
+[CUDA Installation Guide for Linux](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html) (network repo install).
+
+## NVIDIA driver and CUDA toolkit
+
+`nvidia-smi` must already work. Since CUDA 13.4 the `cuda-toolkit` package no longer installs the driver, so install a compatible
+driver first (see NVIDIA's Driver Installation Guide). Replace `ubuntu2404` and `x86_64` for your release and architecture:
 
 ```bash
 cd /tmp
@@ -6,95 +14,76 @@ wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt update
 sudo apt install cuda-toolkit
-
-# Must reboot
-reboot
 ```
 
-Verify CUDA installed:
+Reboot if the driver was installed or updated. Add the toolkit to `PATH` in `~/.bashrc` (`/usr/local/cuda` is a symlink to the
+installed version), then reload it and check:
 
 ```bash
-nvcc --version
+export PATH=/usr/local/cuda/bin:$PATH
 ```
-
-Add to `~/.bashrc`. CUDACXX is to avoid `ERROR: Failed building wheel` issues when trying to pip install with CUDA support:
-
-```bash
-export CUDA_HOME=/usr/local/cuda
-export PATH=$CUDA_HOME/bin:$PATH
-export CUDACXX=/usr/local/cuda/bin/nvcc
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-```
-
-Then source the new environment variables:
 
 ```bash
 source ~/.bashrc
+nvcc --version
 ```
 
-Set up prompt-runner and install packages:
+If CMake picks the wrong CUDA version, set `CUDACXX=/usr/local/cuda/bin/nvcc` before the first `cmake` configure.
+
+## Set up prompt-runner
 
 ```bash
-mkdir ~/prompt-runner
-cd ~/prompt-runner
+git clone https://github.com/fofxtools/prompt-runner.git
+cd prompt-runner
 python3 -m venv .venv
-
-echo -e "ollama" >> requirements.txt
-
 source .venv/bin/activate
-pip install -r requirements.txt
-
-# To install llama-cpp-python and stable-diffusion-cpp-python with CUDA support
-# --no-binary forces source build
-# --no-cache-dir prevents pip from reusing cached CPU wheel
-CMAKE_ARGS="-DGGML_CUDA=ON" pip install llama-cpp-python --force-reinstall --no-binary llama-cpp-python --no-cache-dir
-CMAKE_ARGS="-DSD_CUDA=ON" pip install stable-diffusion-cpp-python --force-reinstall --no-binary stable-diffusion-cpp-python --no-cache-dir
+pip install -e ".[dev]"
 ```
 
-To check they compiled with CUDA:
+## stable-diffusion.cpp (image generation)
+
+Image generation runs through `sd-server` from [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), which
+prompt-runner starts once per model. Build it once and set its absolute path as `sd_server` in `config/config.yaml`. Build steps
+are from the project's [build docs](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/build.md);
+`CMAKE_CUDA_ARCHITECTURES` is a standard CMake option (your GPU's compute capability, e.g. `120` for RTX 50xx, or `native` on
+CMake 3.24+):
 
 ```bash
-ldd .venv/lib/python3.12/site-packages/llama_cpp/lib/libllama.so | grep cuda
-
-ldd .venv/lib/python3.12/site-packages/stable_diffusion_cpp/lib/libstable-diffusion.so | grep cuda
+git clone --recursive https://github.com/leejet/stable-diffusion.cpp
+cd stable-diffusion.cpp
+cmake -S . -B build -DSD_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native
+cmake --build build --config Release -j"$(nproc)"
+build/bin/sd-server --version
 ```
 
-Test if llama-cpp-python is using CUDA or CPU backend:
+To update, pull and rebuild:
 
 ```bash
-python3 - << 'EOF'
-from llama_cpp import llama_cpp
-print("CUDA supported:", llama_cpp.llama_supports_gpu_offload())
-EOF
+git pull origin master
+git submodule update --init --recursive
+cmake --build build --config Release -j"$(nproc)"
 ```
 
-To check with unlimited GPU layers:
+New model families land upstream often, so a model that "isn't supported" usually needs a newer build (if the build misbehaves
+after an update, `rm -rf build` and configure again).
+
+`config/config.yaml` sets `--sage-attn` for every model. SageAttention needs an NVIDIA GPU with compute capability 8.0 or newer
+(RTX 30xx and up) and CUDA 12.0+, with kernels compiled for that GPU ([docs](https://github.com/leejet/stable-diffusion.cpp/blob/master/docs/sage_attention.md)).
+On older GPUs sd-server reports an error: remove `--sage-attn` from `image_server_args`.
+
+To check the GPU is used, watch `nvidia-smi` during a run.
+
+## llama-cpp-python (optional)
+
+Not used by prompt-runner itself (the LLM runner uses Ollama); only for local experiments. From the
+[llama-cpp-python README](https://github.com/abetlen/llama-cpp-python), build with CUDA:
 
 ```bash
-python3 - << 'EOF'
-from llama_cpp import Llama
-llm = Llama(
-    model_path="/home/saqib/ai/llms/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf",
-    n_gpu_layers=-1,
-    verbose=True,
-)
-EOF
+CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir
 ```
 
-Test if stable-diffusion-cpp-python is using CUDA or CPU backend:
+(`--force-reinstall --no-cache-dir` make pip rebuild instead of reusing a cached CPU build.) Check it:
 
 ```bash
-python3 - << 'EOF'
-from stable_diffusion_cpp import StableDiffusion
-sd = StableDiffusion(
-    model_path="/home/saqib/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors",
-    verbose=True,
-)
-EOF
-```
-
-To check GPU memory usage:
-
-```bash
-nvidia-smi --query-gpu=memory.used --format=noheader,nounits
+python3 -c "from llama_cpp import llama_cpp; print('CUDA supported:', llama_cpp.llama_supports_gpu_offload())"
 ```

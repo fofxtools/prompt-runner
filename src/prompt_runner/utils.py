@@ -1,5 +1,6 @@
 """Utility functions for the evals project."""
 
+import copy
 import re
 import secrets
 from datetime import datetime, timezone
@@ -125,47 +126,35 @@ def merge_options(
     return merged
 
 
-def merge_image_options(
-    global_defaults: dict[str, Any] | None,
-    model_options: dict[str, Any] | None,
-    prompt_options: dict[str, Any] | None,
-) -> dict[str, Any]:
+def merge_image_options(*layers: dict[str, Any] | None) -> dict[str, Any]:
     """
-    Merge global defaults, model-level and prompt-level options for image generation.
+    Recursively merge option layers, later layers winning.
 
-    Priority (lowest to highest):
-    1. Global defaults from config.yaml (image_generation_defaults)
-    2. Model-level generation options (passed verbatim)
-    3. Prompt-level options (overwrite on conflict)
-
-    Note: This function blindly merges generation options.
-    Init-only options (e.g. vae_decode_only, keep_clip_on_cpu)
-    are applied at model initialization time and cannot be
-    changed per generation call.
+    Mappings merge key by key; everything else (scalars, lists) is replaced
+    wholesale. Used for generation options (global defaults < model < prompt)
+    and for sd-server flags (config defaults < model). The result shares no
+    state with the inputs.
 
     Args:
-        global_defaults: Global image generation defaults from config (can be None)
-        model_options: Generation options from the model configuration (can be None)
-        prompt_options: Options from the prompt configuration (can be None)
+        *layers: Option dictionaries, lowest priority first (None is skipped)
 
     Returns:
-        Merged options dictionary for image generation
+        A new merged dictionary
 
     Examples:
-        >>> merge_image_options({'width': 512}, {'cfg_scale': 1.0}, {'seed': 42})
-        {'width': 512, 'cfg_scale': 1.0, 'seed': 42}
         >>> merge_image_options({'width': 512}, {'width': 1024}, None)
         {'width': 1024}
+        >>> merge_image_options(
+        ...     {'sample_params': {'sample_steps': 4, 'scheduler': 'discrete'}},
+        ...     {'sample_params': {'sample_steps': 20}},
+        ... )
+        {'sample_params': {'sample_steps': 20, 'scheduler': 'discrete'}}
     """
-    merged = {}
-
-    if global_defaults:
-        merged.update(global_defaults)
-
-    if model_options:
-        merged.update(model_options)
-
-    if prompt_options:
-        merged.update(prompt_options)
-
+    merged: dict[str, Any] = {}
+    for layer in layers:
+        for key, value in (layer or {}).items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = merge_image_options(merged[key], value)
+            else:
+                merged[key] = copy.deepcopy(value)
     return merged

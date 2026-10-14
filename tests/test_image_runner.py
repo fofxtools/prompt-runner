@@ -1,555 +1,347 @@
 """Unit tests for src/prompt_runner/image_runner.py"""
 
+import base64
 import json
-from typing import Any
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from typing import Any, ClassVar
+from unittest.mock import patch
 
 import pytest
-from PIL import Image
 
 from prompt_runner.image_runner import (
-    generate_image,
-    initialize_stable_diffusion,
+    prepare_request,
     run_image_eval,
     save_image_summary,
 )
+from prompt_runner.sdcpp_server import SdCppError
+
+
+class FakeServer:
+    """Stands in for SdCppServer; `outcomes` is consumed one per generate() call."""
+
+    instances: ClassVar[list["FakeServer"]] = []
+    outcomes: ClassVar[list[Any]] = []
+
+    def __init__(self, binary: str, args: dict[str, Any], log_path: Path) -> None:
+        self.binary = binary
+        self.args = args
+        self.argv = [binary, "--flag"]
+        self.requests: list[dict[str, Any]] = []
+        FakeServer.instances.append(self)
+
+    def __enter__(self) -> "FakeServer":  # noqa: PYI034
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def generate(self, request: dict[str, Any]) -> list[bytes]:
+        self.requests.append(request)
+        outcome = FakeServer.outcomes.pop(0) if FakeServer.outcomes else [b"png"]
+        if isinstance(outcome, SdCppError):
+            raise outcome
+        return list(outcome)
+
+
+@pytest.fixture(autouse=True)
+def fake_server():
+    FakeServer.instances = []
+    FakeServer.outcomes = []
+    with (
+        patch("prompt_runner.image_runner.SdCppServer", FakeServer),
+        patch("prompt_runner.image_runner.engine_version", return_value="sd vTEST"),
+    ):
+        yield FakeServer
+
+
+def make_config(tmp_path: Path, **extra: Any) -> dict[str, Any]:
+    return {"results_dir": str(tmp_path), "sd_server": "/bin/sd-server", **extra}
+
+
+def load_summary(tmp_path: Path) -> dict[str, Any]:
+    (run_dir,) = tmp_path.iterdir()
+    summary: dict[str, Any] = json.loads((run_dir / "summary.json").read_text())
+    return summary
 
 
 class TestSaveImageSummary:
-    """Tests for save_image_summary function."""
-
     def test_creates_summary_file(self, tmp_path):
-        """Test that summary.json is created with correct structure."""
-        run_id = "2026-01-10T12:34:56Z-abc123"
         run_dir_name = "2026-01-10_12-34-56Z-abc123"
-        created_at = "2026-01-10T12:34:56Z"
-        run_path = tmp_path / run_dir_name
-        run_path.mkdir()
-
-        prompts = [
-            {
-                "id": "cute_cat_txt2img",
-                "mode": "txt2img",
-                "options": {"prompt": "A cute cat"},
-            },
-            {
-                "id": "cat_img2img",
-                "mode": "img2img",
-                "options": {"prompt": "Refined cat"},
-            },
-        ]
-        models = [
-            {"name": "flux1-schnell"},
-            {"name": "sd15"},
-        ]
-        model_timings = {"flux1-schnell": 45.67, "sd15": 23.45}
+        (tmp_path / run_dir_name).mkdir()
+        failures = [{"model": "m", "prompt": "p", "kind": "job_failed"}]
 
         save_image_summary(
-            run_id,
+            "2026-01-10T12:34:56Z-abc123",
             run_dir_name,
-            created_at,
+            "2026-01-10T12:34:56Z",
             str(tmp_path),
-            prompts,
-            models,
-            model_timings,
+            [{"id": "a", "mode": "txt2img"}, {"id": "b", "mode": "img2img"}],
+            [{"name": "flux1-schnell"}, {"name": "sd15"}],
+            {"flux1-schnell": 45.67, "sd15": 23.45},
+            "sd vTEST",
+            failures,
         )
 
-        summary_file = run_path / "summary.json"
-        assert summary_file.exists()
-
-        with open(summary_file, "r", encoding="utf-8") as f:
-            summary = json.load(f)
-
-        assert summary["run_id"] == run_id
-        assert summary["created_at"] == created_at
-        assert summary["image"]["prompt_count"] == 2
-        assert summary["image"]["model_count"] == 2
-        assert summary["image"]["prompts"] == ["cute_cat_txt2img", "cat_img2img"]
-        assert summary["image"]["models"] == ["flux1-schnell", "sd15"]
-        assert summary["image"]["model_timings"] == {
-            "flux1-schnell": 45.67,
-            "sd15": 23.45,
+        summary = json.loads((tmp_path / run_dir_name / "summary.json").read_text())
+        assert summary["run_id"] == "2026-01-10T12:34:56Z-abc123"
+        assert summary["image"] == {
+            "engine": "sd vTEST",
+            "prompt_count": 2,
+            "model_count": 2,
+            "prompts": ["a", "b"],
+            "models": ["flux1-schnell", "sd15"],
+            "model_timings": {"flux1-schnell": 45.67, "sd15": 23.45},
+            "failures": failures,
         }
 
     def test_raises_if_directory_missing(self, tmp_path):
-        """Test that FileNotFoundError is raised if directory doesn't exist."""
-        run_id = "2026-01-10T12:34:56Z-abc123"
-        run_dir_name = "nonexistent"
-        created_at = "2026-01-10T12:34:56Z"
-        prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
-        models = [{"name": "model"}]
-        model_timings: dict[str, float] = {}
-
         with pytest.raises(FileNotFoundError):
             save_image_summary(
-                run_id,
-                run_dir_name,
-                created_at,
-                str(tmp_path),
-                prompts,
-                models,
-                model_timings,
+                "id", "nonexistent", "t", str(tmp_path), [], [], {}, "sd", []
             )
 
 
-class TestInitializeStableDiffusion:
-    """Tests for initialize_stable_diffusion function."""
+class TestPrepareRequest:
+    def test_random_seed_is_resolved_and_recorded(self, tmp_path):
+        request, recorded = prepare_request({"seed": -1, "prompt": "x"}, tmp_path)
+        assert request["seed"] >= 0
+        assert recorded["seed"] == request["seed"]
 
-    @patch("prompt_runner.image_runner.StableDiffusion")
-    def test_passes_all_init_options_to_stable_diffusion(self, mock_sd_class):
-        """Test that all init_options are passed to StableDiffusion."""
-        mock_instance = MagicMock()
-        mock_sd_class.return_value = mock_instance
+    def test_missing_seed_is_resolved(self, tmp_path):
+        request, _ = prepare_request({"prompt": "x"}, tmp_path)
+        assert isinstance(request["seed"], int) and request["seed"] >= 0
 
-        model_config = {
-            "name": "test-model",
-            "init_options": {
-                "model_path": "/path/to/model.safetensors",
-                "diffusion_model_path": "/path/to/diffusion.gguf",
-                "clip_l_path": "/path/to/clip_l.safetensors",
-                "clip_g_path": "/path/to/clip_g.safetensors",
-                "t5xxl_path": "/path/to/t5xxl.safetensors",
-                "llm_path": "/path/to/llm.gguf",
-                "vae_path": "/path/to/vae.safetensors",
-                "keep_clip_on_cpu": True,
-            },
-            "generation_options": {
-                "cfg_scale": 1.0,
-            },
+    def test_explicit_seed_is_kept(self, tmp_path):
+        request, _ = prepare_request({"seed": 42}, tmp_path)
+        assert request["seed"] == 42
+
+    def test_images_are_copied_inlined_and_recorded_by_name(self, tmp_path):
+        src = tmp_path / "cat.jpg"
+        src.write_bytes(b"cat")
+        other = tmp_path / "dog.jpg"
+        other.write_bytes(b"dog")
+        options = {
+            "seed": 1,
+            "init_image": str(src),
+            "ref_images": [str(src), str(other)],
         }
 
-        result = initialize_stable_diffusion(model_config)
+        request, recorded = prepare_request(options, tmp_path / "inputs" / "p1")
 
-        # Should pass only init_options (not generation_options)
-        mock_sd_class.assert_called_once_with(
-            model_path="/path/to/model.safetensors",
-            diffusion_model_path="/path/to/diffusion.gguf",
-            clip_l_path="/path/to/clip_l.safetensors",
-            clip_g_path="/path/to/clip_g.safetensors",
-            t5xxl_path="/path/to/t5xxl.safetensors",
-            llm_path="/path/to/llm.gguf",
-            vae_path="/path/to/vae.safetensors",
-            keep_clip_on_cpu=True,
-        )
-        assert result == mock_instance
-
-    @patch("prompt_runner.image_runner.StableDiffusion")
-    def test_passes_init_options_verbatim(self, mock_sd_class):
-        """Test that all init_options are passed through as-is."""
-        mock_instance = MagicMock()
-        mock_sd_class.return_value = mock_instance
-
-        model_config = {
-            "name": "flux1-schnell",
-            "init_options": {
-                "diffusion_model_path": "/path/to/model.gguf",
-                "vae_decode_only": True,
-                "keep_clip_on_cpu": True,
-            },
-            "generation_options": {
-                "cfg_scale": 1.0,
-                "sample_steps": 6,
-            },
-        }
-
-        result = initialize_stable_diffusion(model_config)
-
-        # Should pass only init_options (StableDiffusion will validate)
-        mock_sd_class.assert_called_once_with(
-            diffusion_model_path="/path/to/model.gguf",
-            vae_decode_only=True,
-            keep_clip_on_cpu=True,
-        )
-        assert result == mock_instance
-
-    @patch("prompt_runner.image_runner.StableDiffusion")
-    def test_init_defaults_applied_and_model_options_win(self, mock_sd_class):
-        """init_defaults sit underneath init_options: used when absent, overridden when present."""
-        defaults = {"lora_model_dir": "/loras", "keep_clip_on_cpu": False}
-        model_config = {
-            "name": "test-model",
-            "init_options": {"model_path": "/m.safetensors", "keep_clip_on_cpu": True},
-        }
-
-        initialize_stable_diffusion(model_config, defaults)
-
-        mock_sd_class.assert_called_once_with(
-            model_path="/m.safetensors",
-            lora_model_dir="/loras",
-            keep_clip_on_cpu=True,
-        )
-        # inputs must not be mutated
-        assert defaults == {"lora_model_dir": "/loras", "keep_clip_on_cpu": False}
-        assert model_config["init_options"] == {
-            "model_path": "/m.safetensors",
-            "keep_clip_on_cpu": True,
-        }
-
-    def test_raises_if_init_options_missing(self):
-        """Test that ValueError is raised if init_options field is missing."""
-        model_config = {
-            "name": "sd15",
-        }
-
-        with pytest.raises(ValueError, match="missing 'init_options' field"):
-            initialize_stable_diffusion(model_config)
-
-
-class TestGenerateImage:
-    """Tests for generate_image function."""
-
-    def test_txt2img_basic(self):
-        """Test basic txt2img generation."""
-        mock_sd = MagicMock()
-        mock_image = Image.new("RGB", (512, 512), color="red")
-        mock_sd.generate_image.return_value = [mock_image]
-
-        model_config = {"name": "test-model", "options": {}}
-        prompt_config = {
-            "id": "test",
-            "mode": "txt2img",
-            "options": {"prompt": "a cute cat"},
-        }
-        options = {"width": 512, "height": 512}
-
-        result = generate_image(mock_sd, model_config, prompt_config, options)
-
-        assert len(result) == 1
-        assert result[0] == mock_image
-        mock_sd.generate_image.assert_called_once_with(
-            width=512, height=512, prompt="a cute cat"
-        )
-
-    def test_txt2img_with_negative_prompt(self):
-        """Test txt2img with negative prompt (pass-through)."""
-        mock_sd = MagicMock()
-        mock_image = Image.new("RGB", (512, 512), color="blue")
-        mock_sd.generate_image.return_value = [mock_image]
-
-        model_config = {"name": "test-model", "options": {}}
-        prompt_config = {
-            "id": "test",
-            "mode": "txt2img",
-            "options": {
-                "prompt": "a cute cat",
-                "negative_prompt": "ugly",
-            },
-        }
-        options: dict[str, Any] = {}
-
-        result = generate_image(mock_sd, model_config, prompt_config, options)
-
-        assert len(result) == 1
-        mock_sd.generate_image.assert_called_once_with(
-            prompt="a cute cat", negative_prompt="ugly"
-        )
-
-    def test_txt2img_multiple_images(self):
-        """Test generating multiple images using batch_count."""
-        mock_sd = MagicMock()
-        mock_images = [
-            Image.new("RGB", (512, 512), color="green"),
-            Image.new("RGB", (512, 512), color="blue"),
-            Image.new("RGB", (512, 512), color="red"),
+        assert request["init_image"] == base64.b64encode(b"cat").decode()
+        assert request["ref_images"] == [
+            base64.b64encode(b"cat").decode(),
+            base64.b64encode(b"dog").decode(),
         ]
-        mock_sd.generate_image.return_value = mock_images
+        assert recorded["init_image"] == "inputs/p1/init_image_cat.jpg"
+        assert recorded["ref_images"] == [
+            "inputs/p1/ref_images_0_cat.jpg",
+            "inputs/p1/ref_images_1_dog.jpg",
+        ]
+        assert (
+            tmp_path / "inputs" / "p1" / "init_image_cat.jpg"
+        ).read_bytes() == b"cat"
+        assert options["init_image"] == str(src)  # input dict untouched
 
-        model_config = {"name": "test-model", "options": {}}
-        prompt_config = {
-            "id": "test",
-            "mode": "txt2img",
-            "options": {"prompt": "test", "batch_count": 3},
-        }
-        options: dict[str, Any] = {}
-
-        result = generate_image(mock_sd, model_config, prompt_config, options)
-
-        assert len(result) == 3
-        mock_sd.generate_image.assert_called_once_with(prompt="test", batch_count=3)
-
-    def test_img2img_with_strength(self):
-        """Test img2img with strength parameter (pass-through)."""
-        mock_sd = MagicMock()
-        mock_image = Image.new("RGB", (512, 512), color="yellow")
-        mock_sd.generate_image.return_value = [mock_image]
-
-        model_config = {"name": "test-model", "options": {}}
-        prompt_config = {
-            "id": "test",
-            "mode": "img2img",
-            "options": {
-                "prompt": "blue eyes",
-                "init_image": "/path/to/image.png",
-                "strength": 0.7,
-            },
-        }
-        options: dict[str, Any] = {}
-
-        result = generate_image(mock_sd, model_config, prompt_config, options)
-
-        assert len(result) == 1
-        call_kwargs = mock_sd.generate_image.call_args[1]
-        assert call_kwargs["prompt"] == "blue eyes"
-        assert call_kwargs["init_image"] == "/path/to/image.png"
-        assert call_kwargs["strength"] == 0.7
-
-    def test_pass_through_all_prompt_fields(self):
-        """Test that all fields in options are passed through."""
-        mock_sd = MagicMock()
-        mock_image = Image.new("RGB", (512, 512), color="red")
-        mock_sd.generate_image.return_value = [mock_image]
-
-        model_config = {"name": "test-model", "options": {}}
-        prompt_config = {
-            "id": "test",
-            "mode": "txt2img",
-            "options": {
-                "prompt": "test",
-                "negative_prompt": "bad",
-                "custom_field": "custom_value",  # Should be passed through
-                "another_field": 123,  # Should be passed through
-            },
-        }
-        options = {"width": 512}
-
-        generate_image(mock_sd, model_config, prompt_config, options)
-
-        call_kwargs = mock_sd.generate_image.call_args[1]
-        assert call_kwargs["prompt"] == "test"
-        assert call_kwargs["negative_prompt"] == "bad"
-        assert call_kwargs["custom_field"] == "custom_value"
-        assert call_kwargs["another_field"] == 123
-        assert call_kwargs["width"] == 512
-        # Metadata fields should NOT be passed through
-        assert "id" not in call_kwargs
-        assert "mode" not in call_kwargs
-        assert "options" not in call_kwargs
+    def test_missing_input_file_raises_oserror(self, tmp_path):
+        with pytest.raises(OSError):
+            prepare_request(
+                {"seed": 1, "init_image": str(tmp_path / "nope.jpg")}, tmp_path
+            )
 
 
 class TestRunImageEval:
-    """Tests for run_image_eval function."""
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_empty_image_generation_custom_key_is_tolerated(
-        self, mock_generate, mock_init_sd, tmp_path
-    ):
-        """An empty `image_generation_custom:` key in YAML loads as None and must not crash."""
-        mock_init_sd.return_value = MagicMock()
-        mock_generate.return_value = [Image.new("RGB", (512, 512), color="red")]
-        config = {
-            "results_dir": str(tmp_path),
-            "image_generation_defaults": {},
-            "image_generation_custom": None,
-        }
-        prompts = [{"id": "p", "mode": "txt2img", "options": {"prompt": "x"}}]
-        models = [{"name": "m", "init_options": {"model_path": "/test"}}]
-
-        run_image_eval(config, prompts, models, mode_filter="txt2img")
-
-        mock_generate.assert_called_once()
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_passes_image_init_defaults_to_initialize(
-        self, mock_generate, mock_init_sd, tmp_path
-    ):
-        """config.yaml image_init_defaults must reach initialize_stable_diffusion."""
-        mock_init_sd.return_value = MagicMock()
-        mock_generate.return_value = [Image.new("RGB", (512, 512), color="red")]
-        config = {
-            "results_dir": str(tmp_path),
-            "image_generation_defaults": {},
-            "image_init_defaults": {"lora_model_dir": "/loras"},
-        }
-        prompts = [{"id": "p", "mode": "txt2img", "options": {"prompt": "x"}}]
-        models = [{"name": "m", "init_options": {"model_path": "/test"}}]
-
-        run_image_eval(config, prompts, models, mode_filter="txt2img")
-
-        mock_init_sd.assert_called_once_with(models[0], {"lora_model_dir": "/loras"})
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_txt2img_metadata_structure(self, mock_generate, mock_init_sd, tmp_path):
-        """Test that txt2img JSON metadata has correct structure."""
-        # Setup mocks
-        mock_sd = MagicMock()
-        mock_init_sd.return_value = mock_sd
-        mock_image = Image.new("RGB", (512, 512), color="red")
-        mock_generate.return_value = [mock_image]
-
-        # Config
-        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+    def test_writes_images_metadata_and_summary(self, tmp_path):
+        FakeServer.outcomes = [[b"png0", b"png1"]]
+        config = make_config(
+            tmp_path,
+            image_server_args={"--lora-model-dir": "/loras", "--max-vram": 8},
+            image_generation_defaults={
+                "width": 512,
+                "sample_params": {"sample_steps": 4},
+            },
+        )
         prompts = [
+            {"id": "p", "mode": "txt2img", "options": {"prompt": "x", "seed": 5}}
+        ]
+        models = [
             {
-                "id": "test_txt2img",
-                "mode": "txt2img",
-                "options": {"prompt": "A cute cat"},
+                "name": "org/m",
+                "server_args": {"--max-vram": 10, "--sage-attn": True},
+                "generation_options": {"sample_params": {"guidance": {"txt_cfg": 1.0}}},
             }
         ]
-        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
 
-        # Run
-        run_id = run_image_eval(config, prompts, models, mode_filter="txt2img")
+        run_id = run_image_eval(config, prompts, models)
 
-        # Verify JSON metadata
-        json_files = list(tmp_path.glob("**/json/*.json"))
-        assert len(json_files) == 1
+        (run_dir,) = tmp_path.iterdir()
+        assert (run_dir / "image" / "p" / "org_m_0.png").read_bytes() == b"png0"
+        assert (run_dir / "image" / "p" / "org_m_1.png").read_bytes() == b"png1"
+        meta = json.loads(
+            (run_dir / "image" / "p" / "json" / "org_m_1.json").read_text()
+        )
+        assert meta["run_id"] == run_id
+        assert meta["mode"] == "txt2img"
+        assert meta["model"] == {"name": "org/m"}
+        assert meta["prompt"] == {"id": "p"}
+        assert meta["engine"] == "sd vTEST"
+        assert meta["server_args"] == ["/bin/sd-server", "--flag"]
+        assert meta["seed"] == 6  # image 1 of a batch uses seed + 1
+        assert meta["request"]["seed"] == 5
+        assert meta["request"] == {
+            "width": 512,
+            "sample_params": {"sample_steps": 4, "guidance": {"txt_cfg": 1.0}},
+            "prompt": "x",
+            "seed": 5,
+        }
+        assert FakeServer.instances[0].args == {
+            "--lora-model-dir": "/loras",
+            "--max-vram": 10,
+            "--sage-attn": True,
+        }
+        summary = load_summary(tmp_path)
+        assert summary["image"]["engine"] == "sd vTEST"
+        assert summary["image"]["failures"] == []
+        assert "org/m" in summary["image"]["model_timings"]
 
-        with open(json_files[0], "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-
-        # Check structure
-        assert metadata["run_id"] == run_id
-        assert metadata["mode"] == "txt2img"
-        assert metadata["model"]["name"] == "test-model"
-        assert metadata["prompt"]["id"] == "test_txt2img"
-        assert metadata["generation_options"]["prompt"] == "A cute cat"
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_img2img_metadata_structure(self, mock_generate, mock_init_sd, tmp_path):
-        """Test that img2img JSON metadata has correct structure."""
-        # Setup mocks
-        mock_sd = MagicMock()
-        mock_init_sd.return_value = mock_sd
-        mock_image = Image.new("RGB", (512, 512), color="blue")
-        mock_generate.return_value = [mock_image]
-
-        # Config
-        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+    def test_init_image_is_inlined_in_request_and_named_in_metadata(self, tmp_path):
+        src = tmp_path / "cat.jpg"
+        src.write_bytes(b"cat")
+        results = tmp_path / "results"
+        config = make_config(results)
         prompts = [
             {
-                "id": "test_img2img",
+                "id": "p",
                 "mode": "img2img",
-                "options": {
-                    "prompt": "Enhanced cat",
-                    "negative_prompt": "blurry",
-                    "init_image": "/path/to/cat.jpg",
-                    "strength": 0.7,
-                },
+                "options": {"prompt": "x", "init_image": str(src)},
             }
         ]
-        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
 
-        # Run
-        run_image_eval(config, prompts, models, mode_filter="img2img")
+        run_image_eval(config, prompts, [{"name": "m", "server_args": {}}])
 
-        # Verify JSON metadata
-        json_files = list(tmp_path.glob("**/json/*.json"))
-        assert len(json_files) == 1
+        (run_dir,) = results.iterdir()
+        request = FakeServer.instances[0].requests[0]
+        assert request["init_image"] == base64.b64encode(b"cat").decode()
+        meta = json.loads((run_dir / "image" / "p" / "json" / "m_0.json").read_text())
+        assert meta["request"]["init_image"] == "inputs/p/init_image_cat.jpg"
+        assert (run_dir / "inputs" / "p" / "init_image_cat.jpg").exists()
 
-        with open(json_files[0], "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-
-        # Check all fields are in generation_options
-        assert metadata["generation_options"]["prompt"] == "Enhanced cat"
-        assert metadata["generation_options"]["negative_prompt"] == "blurry"
-        assert metadata["generation_options"]["init_image"] == "/path/to/cat.jpg"
-        assert metadata["generation_options"]["strength"] == 0.7
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_mode_filter_txt2img(self, mock_generate, mock_init_sd, tmp_path):
-        """Test that mode_filter='txt2img' only processes txt2img prompts."""
-        # Setup mocks
-        mock_sd = MagicMock()
-        mock_init_sd.return_value = mock_sd
-        mock_image = Image.new("RGB", (512, 512), color="green")
-        mock_generate.return_value = [mock_image]
-
-        # Config with mixed prompts
-        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+    def test_job_failure_is_recorded_and_the_run_continues(self, tmp_path):
+        FakeServer.outcomes = [SdCppError("job_failed", "out of memory"), [b"png"]]
         prompts = [
-            {"id": "txt2img_1", "mode": "txt2img", "options": {"prompt": "Cat"}},
-            {
-                "id": "img2img_1",
-                "mode": "img2img",
-                "options": {
-                    "prompt": "Dog",
-                    "init_image": "/test.jpg",
-                    "strength": 0.5,
-                },
-            },
-            {"id": "txt2img_2", "mode": "txt2img", "options": {"prompt": "Bird"}},
+            {"id": "a", "mode": "txt2img", "options": {"prompt": "x"}},
+            {"id": "b", "mode": "txt2img", "options": {"prompt": "y"}},
         ]
-        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
 
-        # Run with txt2img filter
-        run_image_eval(config, prompts, models, mode_filter="txt2img")
+        run_image_eval(
+            make_config(tmp_path), prompts, [{"name": "m", "server_args": {}}]
+        )
 
-        # Should only generate 2 images (txt2img only)
-        assert mock_generate.call_count == 2
+        (run_dir,) = tmp_path.iterdir()
+        assert not (run_dir / "image" / "a").exists()
+        assert (run_dir / "image" / "b" / "m_0.png").exists()
+        (failure,) = load_summary(tmp_path)["image"]["failures"]
+        assert failure == {
+            "model": "m",
+            "prompt": "a",
+            "kind": "job_failed",
+            "error": "out of memory",
+            "exit_code": None,
+            "log": "server_logs/m.log",
+        }
 
-        # Verify only txt2img directories exist
-        prompt_dirs = list(tmp_path.glob("**/image/*"))
-        prompt_ids = [d.name for d in prompt_dirs]
-        assert "txt2img_1" in prompt_ids
-        assert "txt2img_2" in prompt_ids
-        assert "img2img_1" not in prompt_ids
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_mode_filter_all(self, mock_generate, mock_init_sd, tmp_path):
-        """Test that mode_filter='all' processes all prompts."""
-        # Setup mocks
-        mock_sd = MagicMock()
-        mock_init_sd.return_value = mock_sd
-        mock_image = Image.new("RGB", (512, 512), color="yellow")
-        mock_generate.return_value = [mock_image]
-
-        # Config with mixed prompts
-        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
+    def test_server_death_stops_that_model_but_not_the_next(self, tmp_path):
+        FakeServer.outcomes = [SdCppError("server_died", "gone", 9), [b"png"]]
         prompts = [
-            {"id": "txt2img_1", "mode": "txt2img", "options": {"prompt": "Cat"}},
-            {
-                "id": "img2img_1",
-                "mode": "img2img",
-                "options": {
-                    "prompt": "Dog",
-                    "init_image": "/test.jpg",
-                    "strength": 0.5,
-                },
-            },
+            {"id": "a", "mode": "txt2img", "options": {"prompt": "x"}},
+            {"id": "b", "mode": "txt2img", "options": {"prompt": "y"}},
         ]
-        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+        models = [{"name": "m1", "server_args": {}}, {"name": "m2", "server_args": {}}]
 
-        # Run with 'all' filter
-        run_image_eval(config, prompts, models, mode_filter="all")
+        run_image_eval(make_config(tmp_path), prompts, models)
 
-        # Should generate both images
-        assert mock_generate.call_count == 2
+        (run_dir,) = tmp_path.iterdir()
+        assert len(FakeServer.instances[0].requests) == 1  # m1 stopped after the death
+        assert (run_dir / "image" / "a" / "m2_0.png").exists()
+        assert (run_dir / "image" / "b" / "m2_0.png").exists()
+        (failure,) = load_summary(tmp_path)["image"]["failures"]
+        assert (failure["model"], failure["kind"], failure["exit_code"]) == (
+            "m1",
+            "server_died",
+            9,
+        )
+
+    def test_server_start_failure_is_recorded_and_next_model_runs(self, tmp_path):
+        class StartFails(FakeServer):
+            def __enter__(self) -> "FakeServer":
+                if self.args.get("--bad"):
+                    raise SdCppError("server_died", "exited with code 1", 1)
+                return self
+
+        prompts = [{"id": "a", "mode": "txt2img", "options": {"prompt": "x"}}]
+        models = [
+            {"name": "bad", "server_args": {"--bad": True}},
+            {"name": "good", "server_args": {}},
+        ]
+        with patch("prompt_runner.image_runner.SdCppServer", StartFails):
+            run_image_eval(make_config(tmp_path), prompts, models)
+
+        (run_dir,) = tmp_path.iterdir()
+        assert (run_dir / "image" / "a" / "good_0.png").exists()
+        (failure,) = load_summary(tmp_path)["image"]["failures"]
+        assert (failure["model"], failure["prompt"]) == ("bad", None)
+
+    def test_missing_input_file_is_recorded(self, tmp_path):
+        prompts = [
+            {
+                "id": "a",
+                "mode": "img2img",
+                "options": {"prompt": "x", "init_image": str(tmp_path / "nope.jpg")},
+            }
+        ]
+
+        run_image_eval(
+            make_config(tmp_path / "r"), prompts, [{"name": "m", "server_args": {}}]
+        )
+
+        (failure,) = load_summary(tmp_path / "r")["image"]["failures"]
+        assert failure["kind"] == "job_failed"
+        assert "input error" in failure["error"]
+        assert FakeServer.instances[0].requests == []
+
+    def test_mode_filter(self, tmp_path):
+        prompts = [
+            {"id": "t", "mode": "txt2img", "options": {"prompt": "x"}},
+            {"id": "i", "mode": "img2img", "options": {"prompt": "y"}},
+        ]
+
+        run_image_eval(
+            make_config(tmp_path),
+            prompts,
+            [{"name": "m", "server_args": {}}],
+            "txt2img",
+        )
+
+        (run_dir,) = tmp_path.iterdir()
+        assert (run_dir / "image" / "t").exists()
+        assert not (run_dir / "image" / "i").exists()
+
+    def test_no_server_started_when_no_prompt_matches(self, tmp_path):
+        prompts = [{"id": "t", "mode": "txt2img", "options": {"prompt": "x"}}]
+
+        run_image_eval(
+            make_config(tmp_path),
+            prompts,
+            [{"name": "m", "server_args": {}}],
+            "img2img",
+        )
+
+        assert FakeServer.instances == []
 
     def test_invalid_mode_filter_raises_error(self, tmp_path):
-        """Test that invalid mode_filter raises ValueError."""
-        config = {"results_dir": str(tmp_path), "image_generation_defaults": {}}
-        prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "Test"}}]
-        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
+        with pytest.raises(ValueError, match="Invalid mode_filter"):
+            run_image_eval(make_config(tmp_path), [], [], mode_filter="bogus")
 
-        with pytest.raises(
-            ValueError, match="Invalid mode_filter: invalid. Must be 'txt2img'"
-        ):
-            run_image_eval(config, prompts, models, mode_filter="invalid")
-
-    @patch("prompt_runner.image_runner.initialize_stable_diffusion")
-    @patch("prompt_runner.image_runner.generate_image")
-    def test_prompt_prefix_prepended(self, mock_generate, mock_init_sd, tmp_path):
-        """Test that prompt_prefix from image_generation_custom is prepended."""
-        mock_sd = MagicMock()
-        mock_init_sd.return_value = mock_sd
-        mock_generate.return_value = [Image.new("RGB", (512, 512))]
-
-        config = {
-            "results_dir": str(tmp_path),
-            "image_generation_defaults": {},
-            "image_generation_custom": {"prompt_prefix": "masterpiece, "},
-        }
-        prompts = [{"id": "test", "mode": "txt2img", "options": {"prompt": "a cat"}}]
-        models = [{"name": "test-model", "init_options": {"model_path": "/test"}}]
-
-        run_image_eval(config, prompts, models)
-
-        call_args = mock_generate.call_args
-        prompt_config = call_args[0][2]
-        assert prompt_config["options"]["prompt"] == "masterpiece, a cat"
+    def test_missing_sd_server_raises_error(self, tmp_path):
+        with pytest.raises(ValueError, match="sd_server"):
+            run_image_eval({"results_dir": str(tmp_path)}, [], [])

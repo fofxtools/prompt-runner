@@ -1,294 +1,273 @@
 # Image generation models configuration
-# Each model specifies the diffusion model and required text encoders/VAE
+# One sd-server (stable-diffusion.cpp) is started per model.
 #
-# init_options: Initialization parameters for StableDiffusion.__init__()
-#   - Paths: diffusion_model_path, model_path, clip_l_path, t5xxl_path, vae_path, etc.
-#   - Init flags: keep_clip_on_cpu, vae_decode_only, etc.
+# server_args: literal sd-server flags for this model, merged over image_server_args in config.yaml.
+#   true gives a bare flag, false/null omits it, anything else gives `flag value`.
+#   - Paths: --diffusion-model (or --model for all-in-one checkpoints), --llm, --llm_vision,
+#     --clip_l, --clip_g, --t5xxl, --vae
+#   - --max-vram 10 on the Klein and Qwen-Image 2.1 entries: caps VRAM so large images (1536x1536) don't OOM, at some speed cost on
+#     small ones. Left off elsewhere, where sd.cpp's default auto-fit is faster (FLUX.2 dev is ~2.5x slower with it).
+#   - A model's value wins over image_server_args; `false` drops a global flag (e.g. --sage-attn: false)
 #
-# generation_options: Default generation parameters for this model
-#   - cfg_scale, sample_steps, width, height, etc.
-#   - These are merged with global defaults and prompt options
+# generation_options: native sd-server request fields, merged (recursively) between
+#   image_generation_defaults in config.yaml and each prompt's options.
+#   - width, height, sample_params: {sample_steps, guidance: {txt_cfg}}, lora: [{path, multiplier}], etc.
+#   - See stable-diffusion.cpp/examples/server/api.md
 
 - name: v1-5-pruned-emaonly
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/v1-5-pruned-emaonly.safetensors
 
 - name: abyssorangemix3AOM3_aom3a1b
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/abyssorangemix3AOM3_aom3a1b.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/abyssorangemix3AOM3_aom3a1b.safetensors
 
 - name: anythingAnd_anythingAndEverything
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/anythingAnd_anythingAndEverything.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/anythingAnd_anythingAndEverything.safetensors
 
 - name: dreamshaper_8
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaper_8.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/dreamshaper_8.safetensors
 
 - name: dreamshaperXL_lightningDPMSDE
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_lightningDPMSDE.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_lightningDPMSDE.safetensors
   generation_options:
-    cfg_scale: 2.0
-    sample_steps: 5
+    sample_params: {sample_steps: 5, guidance: {txt_cfg: 2.0}}
 
 - name: dreamshaperXL_alpha2Xl10
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_alpha2Xl10.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_alpha2Xl10.safetensors
   generation_options:
-    cfg_scale: 6.0
+    sample_params: {guidance: {txt_cfg: 6.0}}
 
 - name: dreamshaperXL_lightningInpaint
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_lightningInpaint.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/dreamshaperXL_lightningInpaint.safetensors
   generation_options:
-    cfg_scale: 2.0
-    sample_steps: 5
+    sample_params: {sample_steps: 5, guidance: {txt_cfg: 2.0}}
 
 - name: juggernautXL_ragnarokBy
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/juggernautXL_ragnarokBy.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/juggernautXL_ragnarokBy.safetensors
 
 - name: meinamix_v12Final
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/meinamix_v12Final.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/meinamix_v12Final.safetensors
 
 - name: realisticVisionV60B1_v51HyperVAE
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/realisticVisionV60B1_v51HyperVAE.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/realisticVisionV60B1_v51HyperVAE.safetensors
 
 - name: toonyou_beta6
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/toonyou_beta6.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/toonyou_beta6.safetensors
 
 - name: kohakuXLEpsilon_rev2
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/kohakuXLEpsilon_rev2.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/kohakuXLEpsilon_rev2.safetensors
 
 - name: sdxlFixedvaeFp16Remove_baseFixedvaeV1Fp16
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/sdxlFixedvaeFp16Remove_baseFixedvaeV1Fp16.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/sdxlFixedvaeFp16Remove_baseFixedvaeV1Fp16.safetensors
 
 - name: LahCuteCartoonSDXL_alpha
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/LahCuteCartoonSDXL_alpha.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/LahCuteCartoonSDXL_alpha.safetensors
 
 - name: sd_xl_base_1.0
-  init_options:
-    model_path: /home/shared/ai/diffusion/checkpoints/sd_xl_base_1.0.safetensors
-    clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
-    clip_g_path: /home/shared/ai/text_encoders/clip_g.safetensors
-    vae_path: /home/shared/ai/vae/sdxl.vae.safetensors
+  server_args:
+    --model: /home/shared/ai/diffusion/checkpoints/sd_xl_base_1.0.safetensors
+    --clip_l: /home/shared/ai/text_encoders/clip_l.safetensors
+    --clip_g: /home/shared/ai/text_encoders/clip_g.safetensors
+    --vae: /home/shared/ai/vae/sdxl.vae.safetensors
   generation_options:
     width: 1024
     height: 1024
-    cfg_scale: 6.0
-    sample_steps: 25
+    sample_params: {sample_steps: 25, guidance: {txt_cfg: 6.0}}
 
-# keep_clip_on_cpu: true needed even at 512x512 (t5xxl_fp16 alone is ~9GB in VRAM)
 - name: sd3.5_medium
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/checkpoints/sd3.5_medium.safetensors
-    clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
-    clip_g_path: /home/shared/ai/text_encoders/clip_g.safetensors
-    t5xxl_path: /home/shared/ai/text_encoders/t5xxl_fp16.safetensors
-    vae_path: /home/shared/ai/vae/diffusion_pytorch_model.safetensors
-    keep_clip_on_cpu: true
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/checkpoints/sd3.5_medium.safetensors
+    --clip_l: /home/shared/ai/text_encoders/clip_l.safetensors
+    --clip_g: /home/shared/ai/text_encoders/clip_g.safetensors
+    --t5xxl: /home/shared/ai/text_encoders/t5xxl_fp16.safetensors
+    --vae: /home/shared/ai/vae/diffusion_pytorch_model.safetensors
   generation_options:
-    cfg_scale: 4.5
-    sample_steps: 20
+    sample_params: {sample_steps: 20, guidance: {txt_cfg: 4.5}}
 
-# keep_clip_on_cpu: true needed even at 512x512
 - name: sd3.5_large_turbo-Q5_1
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
-    clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
-    clip_g_path: /home/shared/ai/text_encoders/clip_g.safetensors
-    t5xxl_path: /home/shared/ai/text_encoders/t5xxl_fp8_e4m3fn.safetensors
-    vae_path: /home/shared/ai/vae/diffusion_pytorch_model.safetensors
-    keep_clip_on_cpu: true
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/sd3.5_large_turbo-Q5_1.gguf
+    --clip_l: /home/shared/ai/text_encoders/clip_l.safetensors
+    --clip_g: /home/shared/ai/text_encoders/clip_g.safetensors
+    --t5xxl: /home/shared/ai/text_encoders/t5xxl_fp8_e4m3fn.safetensors
+    --vae: /home/shared/ai/vae/diffusion_pytorch_model.safetensors
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 6
+    sample_params: {sample_steps: 6, guidance: {txt_cfg: 1.0}}
 
-# Above 872x872 will need keep_clip_on_cpu: true
-# Above 1160x1160 will need both keep_clip_on_cpu: true and keep_vae_on_cpu: true
-# Fails above 1416x1416
 - name: z_image_turbo-Q5_K_M
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/z_image_turbo-Q5_K_M.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/ae.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/z_image_turbo-Q5_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
+    --vae: /home/shared/ai/vae/ae.safetensors
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 9
+    sample_params: {sample_steps: 9, guidance: {txt_cfg: 1.0}}
 
-# At 1024x1024 will need keep_vae_on_cpu: true
 - name: flux1-schnell-Q5_K_S
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux1-schnell-Q5_K_S.gguf
-    clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
-    t5xxl_path: /home/shared/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
-    vae_path: /home/shared/ai/vae/ae.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux1-schnell-Q5_K_S.gguf
+    --clip_l: /home/shared/ai/text_encoders/clip_l.safetensors
+    --t5xxl: /home/shared/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
+    --vae: /home/shared/ai/vae/ae.safetensors
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 6
+    sample_params: {sample_steps: 6, guidance: {txt_cfg: 1.0}}
 
-# At 1024x1024 will need both keep_clip_on_cpu: true and keep_vae_on_cpu: true
 - name: flux1-dev-Q5_1
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux1-dev-Q5_1.gguf
-    clip_l_path: /home/shared/ai/text_encoders/clip_l.safetensors
-    t5xxl_path: /home/shared/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
-    vae_path: /home/shared/ai/vae/ae.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux1-dev-Q5_1.gguf
+    --clip_l: /home/shared/ai/text_encoders/clip_l.safetensors
+    --t5xxl: /home/shared/ai/text_encoders/t5-v1_1-xxl-encoder-Q5_K_M.gguf
+    --vae: /home/shared/ai/vae/ae.safetensors
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 20
+    sample_params: {sample_steps: 20, guidance: {txt_cfg: 1.0}}
 
-# Requires stable-diffusion.cpp's Qwen-Image-2.1 support, added upstream after
-# the current stable-diffusion-cpp-python 0.4.7 release. Not usable yet.
+# Qwen-Image 2.1 (best one-shot renderer for long in-image text). cfg 4.0, 25 steps, ~50-70s per image.
 - name: qwen-image-2.1-Q4_K_M
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q4_K_M.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
-    vae_path: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 25
+    sample_params: {sample_steps: 25, guidance: {txt_cfg: 4.0}}
 
-# offload_params_to_cpu is required, not optional: text encoder (7.1GB) +
-# diffusion model (9.3GB) exceeds a 16GB card's VRAM regardless of image
-# resolution. vae_path must be the native/ComfyUI-split-format file
-# (qwen_image_vae.safetensors) - the diffusers-format VAE also in vae/
-# (Qwen2.5-VL-7B-Instruct-diffusion_pytorch_model.safetensors) uses a
-# different tensor naming convention and fails to load. Needs ref_images=[...]
-# in generate_image() since this is an image-editing model, not txt2img.
+# --vae must be the native/ComfyUI-split-format file (qwen_image_vae.safetensors) - the
+# diffusers-format VAE also in vae/ (Qwen2.5-VL-7B-Instruct-diffusion_pytorch_model.safetensors)
+# uses a different tensor naming convention and fails to load. Needs ref_images: [...] in the
+# prompt options since this is an image-editing model, not txt2img.
 - name: Qwen-Image-Edit-2509-Q3_K_M
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/Qwen-Image-Edit-2509-Q3_K_M.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
-    llm_vision_path: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf
-    vae_path: /home/shared/ai/vae/qwen_image_vae.safetensors
-    offload_params_to_cpu: true
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/Qwen-Image-Edit-2509-Q3_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    --llm_vision: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf
+    --vae: /home/shared/ai/vae/qwen_image_vae.safetensors
   generation_options:
-    cfg_scale: 2.5
-    sample_steps: 20
+    sample_params: {sample_steps: 20, guidance: {txt_cfg: 2.5}}
 
 # FLUX.2 Klein 4B stock (BFL bf16 safetensors) with the Unsloth Q5_K_XL Qwen3-4B text encoder.
 # (qwen_3_4b_fp4_flux2.safetensors is ComfyUI-quantized and unsupported by stable-diffusion.cpp.)
 - name: flux-2-klein-4b
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/checkpoints/flux-2-klein-4b.safetensors
-    llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/checkpoints/flux-2-klein-4b.safetensors
+    --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # FLUX.2 Klein 4B stock (unsloth GGUF quants) with the same Qwen3-4B text encoder.
 - name: flux-2-klein-4b-Q4_K_M
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q4_K_M.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 - name: flux-2-klein-4b-Q6_K
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q6_K.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q6_K.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 - name: flux-2-klein-4b-Q8_0
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q8_0.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q8_0.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # FLUX.2 Klein 9B stock (unsloth Q4_K_M GGUF) with the stock Qwen3-8B text encoder.
 - name: flux-2-klein-9b-Q4_K_M
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-Q4_K_M.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # FLUX.2 Klein 9B, PornMaster NSFW finetune, Turbo-distilled (4 steps).
 # https://huggingface.co/rectangleworm/PornMaster_Klein-9b/tree/main/unet/turbo?not-for-all-audiences=true
 - name: PornMaster_Flux2Klein_v4_Turbo_Q6_K
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/PornMaster_Flux2Klein_v4_Turbo_Q6_K.gguf
-    llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/PornMaster_Flux2Klein_v4_Turbo_Q6_K.gguf
+    --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # Flux.2-Klein-9B-KV-Merge (vladmandic's SDNQ uint4 package) converted to GGUF
 # See docs/kv-merge-gguf-plan.md.
 # Weights were already uint4, so Q8_0 is ~lossless vs SD.Next.
-# keep_clip_on_cpu: true required (OOMs without it); offload_params_to_cpu is much slower.
 - name: flux-2-klein-9b-kv-merge-Q8_0
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q8_0.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    keep_clip_on_cpu: true
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q8_0.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # Flux.2-Klein-9B-KV-Merge (vladmandic's SDNQ uint4 package) converted to GGUF
 # See docs/kv-merge-gguf-plan.md.
 - name: flux-2-klein-9b-kv-merge-Q5_K
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q5_K.gguf
-    llm_path: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q5_K.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # FLUX.2 Klein 9B SNOFS. Converted from the original fp8 safetensors (which
 # stable-diffusion.cpp upconverts to F16 at load - 17.3GB, bigger than a
-# 16GB card's entire VRAM) to Q5_K GGUF via stable_diffusion_cpp.sd_cpp.convert().
+# 16GB card's entire VRAM) to Q5_K GGUF via `sd-cli -M convert`.
 # https://civitai.red/models/2416142/snofs-sex-nudes-and-other-fun-stuff-merged?modelVersionId=2985440
 - name: snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K.gguf
-    llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K.gguf
+    --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # https://civitai.red/models/2675485/pgguf-snofs-sex-nudes-and-other-fun-stuff-flux-2-klein-9b-distilled
 - name: pGGUFSNOFSSexNudesAndOther_v14Distilled_pruned_q5KM
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/pGGUFSNOFSSexNudesAndOther_v14Distilled_pruned_q5KM.gguf
-    llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
-    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/pGGUFSNOFSSexNudesAndOther_v14Distilled_pruned_q5KM.gguf
+    --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+    --max-vram: 10
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 4
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # FLUX.2 dev (32B, city96 Q4_K_M GGUF) with the Mistral-Small-3.2-24B text encoder. 32GB of weights on a 16GB card:
 # only works through sd.cpp's auto-fit (streams weights from disk, ~80s per 512x512 image at 20 steps). Same FLUX.2 VAE as Klein.
 - name: flux2-dev-Q4_K_M
-  init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux2-dev-Q4_K_M.gguf
-    llm_path: /home/shared/ai/text_encoders/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux2-dev-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf
+    --vae: /home/shared/ai/vae/flux2-vae.safetensors
   generation_options:
-    cfg_scale: 1.0
-    sample_steps: 20
+    sample_params: {sample_steps: 20, guidance: {txt_cfg: 1.0}}

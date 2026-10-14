@@ -2,17 +2,19 @@
 # - id: lowercase alphanumeric + underscore only
 # - mode: txt2img | img2img
 #
-# Common options (passed directly to StableDiffusion.generate_image):
+# Options are native sd-server request fields (see stable-diffusion.cpp/examples/server/api.md):
 # - prompt: string or block
 # - negative_prompt: string or block
-# - cfg_scale: float (classifier-free guidance)
-# - sample_steps: int (number of diffusion steps)
+# - sample_params: {sample_steps, guidance: {txt_cfg}} (merged with the model's)
 # - seed: int (-1 for random)
 # - batch_count: int (number of images to generate; default: 1)
+# - lora: [{path, multiplier}]
 #
-# Img2img-only options:
+# Img2img-only options (file paths, sent to the server as base64):
 # - init_image: path to input image
 # - strength: float (0.0–1.0)
+# - mask_image: path to mask
+# - ref_images: [paths] (edit models such as Qwen-Image-Edit)
 
 # ============================================================
 # TXT2IMG PROMPTS

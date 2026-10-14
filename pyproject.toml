@@ -4,14 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-runner"
-version = "0.1.6"
+version = "0.2.0"
 description = "LLM evaluation toolkit for running prompts across multiple models"
 requires-python = ">=3.10"
 dependencies = [
     "ollama",
     "pyyaml",
-    "stable-diffusion-cpp-python",
-    "pillow",
 ]
 
 [project.optional-dependencies]
@@ -37,10 +35,6 @@ prompt_runner = ["py.typed"]
 
 [tool.mypy]
 strict = true
-
-[[tool.mypy.overrides]]
-module = "stable_diffusion_cpp.*"
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"

@@ -206,11 +206,10 @@ def load_image_models(
 
     The file must contain a YAML list where each model has:
     - name: the model identifier
-    - init_options: dict containing all StableDiffusion initialization parameters
-      (diffusion_model_path, model_path, clip_l_path, clip_g_path, t5xxl_path,
-      llm_path, vae_path, keep_clip_on_cpu, vae_decode_only, etc.)
-    - generation_options: (optional) dict containing default generation parameters
-      (cfg_scale, sample_steps, width, height, etc.)
+    - server_args: dict of literal sd-server flags (--diffusion-model, --vae,
+      --llm, --max-vram, ...); true gives a bare flag, false/null omits it
+    - generation_options: (optional) dict of default native request fields
+      (width, height, sample_params, lora, etc.)
 
     Args:
         models_path: Path to the image_models.yaml file (default: config/image_models.yaml)
@@ -243,15 +242,13 @@ def load_image_models(
         if "name" not in model:
             raise ValueError(f"Model at index {i} missing required 'name' field")
 
-        # Validate init_options field (required)
-        if "init_options" not in model:
-            raise ValueError(
-                f"Model at index {i} missing required 'init_options' field"
-            )
+        # Validate server_args field (required)
+        if "server_args" not in model:
+            raise ValueError(f"Model at index {i} missing required 'server_args' field")
 
-        if not isinstance(model["init_options"], dict):
+        if not isinstance(model["server_args"], dict):
             raise TypeError(
-                f"Model '{model.get('name', i)}' field 'init_options' must be a dictionary"
+                f"Model '{model.get('name', i)}' field 'server_args' must be a dictionary"
             )
 
         # Validate generation_options field (optional)
@@ -274,8 +271,8 @@ def load_image_prompts(
     Each prompt must have:
     - id: string matching regex ^[a-z0-9_]+$
     - mode: "txt2img" or "img2img"
-    - options: dict containing all StableDiffusion.generate_image() parameters
-      (prompt, negative_prompt, cfg_scale, sample_steps, seed, batch_count, etc.)
+    - options: dict of native sd-server request fields (prompt, negative_prompt,
+      seed, batch_count, sample_params, init_image, etc.)
 
     Args:
         prompts_path: Path to the image_prompts.yaml file (default: config/image_prompts.yaml)
