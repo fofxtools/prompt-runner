@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.6] - 2026-10-14
+
+### Image models
+- Replaced `PornMaster_Flux2Klein_v4_Turbo_Q5_K` with `PornMaster_Flux2Klein_v4_Turbo_Q6_K`, the original
+  unpatched GGUF (loads on current stable-diffusion.cpp, so the head_dim patch is no longer needed).
+- Added `flux2-dev-Q4_K_M` (FLUX.2 dev, 32B, Mistral-Small-3.2 encoder).
+- Klein entries use the small-decoder VAE (`full_encoder_small_decoder.safetensors`) instead of `flux2-vae.safetensors`.
+
+### Docs
+- Added `kv-merge-gguf-frictions.md`.
+
 ## [0.1.5] - 2026-10-13
 
 ### Image models

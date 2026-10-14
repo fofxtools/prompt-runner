@@ -180,7 +180,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/checkpoints/flux-2-klein-4b.safetensors
     llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -190,7 +190,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q4_K_M.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -199,7 +199,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q6_K.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -208,7 +208,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q8_0.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -218,19 +218,18 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-Q4_K_M.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
 
 # FLUX.2 Klein 9B, PornMaster NSFW finetune, Turbo-distilled (4 steps).
-# diffusion_model_path is a patched copy (scripts/patch_gguf_head_dim.py).
-# See docs/dev-notes.md.
-- name: PornMaster_Flux2Klein_v4_Turbo_Q5_K
+# https://huggingface.co/rectangleworm/PornMaster_Klein-9b/tree/main/unet/turbo?not-for-all-audiences=true
+- name: PornMaster_Flux2Klein_v4_Turbo_Q6_K
   init_options:
-    diffusion_model_path: /home/shared/ai/diffusion/gguf/PornMaster_Flux2Klein_v4_Turbo_Q5_K.sdcpp-patched.gguf
+    diffusion_model_path: /home/shared/ai/diffusion/gguf/PornMaster_Flux2Klein_v4_Turbo_Q6_K.gguf
     llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -243,7 +242,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q8_0.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
     keep_clip_on_cpu: true
   generation_options:
     cfg_scale: 1.0
@@ -255,7 +254,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q5_K.gguf
     llm_path: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -268,7 +267,7 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K.gguf
     llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
@@ -278,7 +277,18 @@
   init_options:
     diffusion_model_path: /home/shared/ai/diffusion/gguf/pGGUFSNOFSSexNudesAndOther_v14Distilled_pruned_q5KM.gguf
     llm_path: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
-    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+    vae_path: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
   generation_options:
     cfg_scale: 1.0
     sample_steps: 4
+
+# FLUX.2 dev (32B, city96 Q4_K_M GGUF) with the Mistral-Small-3.2-24B text encoder. 32GB of weights on a 16GB card:
+# only works through sd.cpp's auto-fit (streams weights from disk, ~80s per 512x512 image at 20 steps). Same FLUX.2 VAE as Klein.
+- name: flux2-dev-Q4_K_M
+  init_options:
+    diffusion_model_path: /home/shared/ai/diffusion/gguf/flux2-dev-Q4_K_M.gguf
+    llm_path: /home/shared/ai/text_encoders/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf
+    vae_path: /home/shared/ai/vae/flux2-vae.safetensors
+  generation_options:
+    cfg_scale: 1.0
+    sample_steps: 20
