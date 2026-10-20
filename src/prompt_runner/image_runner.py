@@ -270,6 +270,13 @@ class _Run:
             self.skipped(job, args)
 
 
+def merged_server_args(
+    server_defaults: dict[str, Any] | None, model: dict[str, Any]
+) -> dict[str, Any]:
+    """The server flags of a model: `server_defaults` under the model's own `server_args`."""
+    return merge_image_options(server_defaults, model["server_args"])
+
+
 def run_jobs(
     jobs: list[Job],
     *,
@@ -330,7 +337,7 @@ def run_jobs(
 
     groups: dict[str, tuple[dict[str, Any], list[Job]]] = {}
     for job in todo:
-        args = merge_image_options(server_defaults, job.model["server_args"])
+        args = merged_server_args(server_defaults, job.model)
         key = json.dumps(args, sort_keys=True, default=str)
         groups.setdefault(key, (args, []))[1].append(job)
 

@@ -13,8 +13,8 @@ import yaml
 
 from . import keepalive
 from .config import load_config, load_image_models
-from .image_runner import Job, run_jobs
-from .sdcpp_server import SdCppServer
+from .image_runner import Job, merged_server_args, prepare_request, run_jobs
+from .sdcpp_server import SdCppError, SdCppServer
 from .utils import merge_image_options
 
 DESCRIPTION = """\
@@ -25,7 +25,8 @@ config/image_models.yaml. It goes through prompt-runner's run_jobs, so settings 
 EPILOG = """\
 Linux only. The sd-server stays loaded between calls, so the next call skips the model load (about 3 s). The first call starts
 it and prints its pid; a call that needs a different model (different server flags) replaces it; calls queue behind
-one another. Stop it with `kill PID`; it also ends with an OpenCode session. If something else is listening on the
+one another. `genimg --start` loads it ahead of time with a throwaway 64x64 image (e.g. before something else takes the GPU).
+Stop it with `genimg --stop` (or `kill PID`); it also ends with an OpenCode session. If something else is listening on the
 port (8190, or $GENIMG_PORT), genimg refuses to touch it. Files: /tmp/genimg-sd-<port>.lock, .json (what runs) and
 .log (the server's output).
 
@@ -74,8 +75,18 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("prompt")
-    ap.add_argument("-o", "--output", required=True, help="PNG file to write")
+    ap.add_argument("prompt", nargs="?")
+    ap.add_argument("-o", "--output", help="PNG file to write (required)")
+    ap.add_argument(
+        "--start",
+        action="store_true",
+        help="start the sd-server and load its model (--model, else as for an image), then exit",
+    )
+    ap.add_argument(
+        "--stop",
+        action="store_true",
+        help="stop the kept sd-server (after any running call) and exit",
+    )
     ap.add_argument("--model", help="model name (default: default_image_model)")
     ap.add_argument("--seed", type=int, help="-1 or unset: random")
     ap.add_argument("--size", type=_size, metavar="WxH", help="default: from config")
@@ -149,8 +160,20 @@ def _port() -> int:
     return int(text)
 
 
-def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) -> str:
-    """Run one job on the kept server; return the success line."""
+def _stop(port: int, state_dir: Path | None) -> str:
+    """Stop the kept server once any running call is done; return what happened."""
+    keepalive.check_supported()
+    paths = keepalive.paths_for(port, state_dir)
+    with keepalive.call_lock(paths.lock):
+        was_running = keepalive.running_model(paths.state) is not None
+        keepalive.stop_server(paths.state)
+    return (
+        "stopped the sd-server" if was_running else "no sd-server of genimg is running"
+    )
+
+
+def _load(repo_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Load config.yaml and image_models.yaml."""
     try:
         config = load_config(str(repo_root / "config/config.yaml"))
         models = load_image_models(str(repo_root / "config/image_models.yaml"))
@@ -158,6 +181,53 @@ def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None)
         raise GenimgError(f"cannot load the config: {e}") from e
     if not config.get("sd_server"):
         raise GenimgError("config/config.yaml has no sd_server")
+    return config, models
+
+
+def _start(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) -> str:
+    """
+    Make sure the kept server is running with its model loaded; return what happened.
+
+    The server loads its model on the first request, so a tiny image is made to load it
+    now: only then does the model hold its GPU memory.
+    """
+    config, models = _load(repo_root)
+    keepalive.check_supported()
+    port = _port()
+    paths = keepalive.paths_for(port, state_dir)
+    with keepalive.call_lock(paths.lock):
+        running = None if args.model else keepalive.running_model(paths.state)
+        model = _pick_model(models, args.model or running, config, running is not None)
+        warm_up = merge_image_options(
+            config.get("image_generation_defaults"),
+            model.get("generation_options"),
+            {"prompt": "warm-up", "width": 64, "height": 64},
+        )
+        started = False
+        try:
+            server, started = keepalive.ensure_server(
+                config["sd_server"],
+                merged_server_args(config.get("image_server_args"), model),
+                port=port,
+                model_name=model["name"],
+                paths=paths,
+            )
+            server.generate(prepare_request(warm_up)[0])
+        except (SdCppError, OSError) as e:
+            # As for an image call: a dead server, or a new one that cannot load its model, is not kept.
+            problem = ""
+            if started or getattr(e, "kind", "") == "server_died":
+                try:
+                    keepalive.stop_server(paths.state)
+                except keepalive.KeepAliveError as stop_error:
+                    problem = f"; {stop_error}"
+            raise GenimgError(f"{e} (server log: {paths.log}){problem}") from e
+    return f"sd-server ready with {model['name']} ({'started' if started else 'already running'})"
+
+
+def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) -> str:
+    """Run one job on the kept server; return the success line."""
+    config, models = _load(repo_root)
 
     out = Path(args.output)
     if out.exists():
@@ -246,10 +316,27 @@ def main(
     Returns:
         The exit code: 0 on success, 1 on failure (a message on stderr), 130 if interrupted
     """
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.start and args.stop:
+        parser.error("choose --start or --stop")
+    if args.start or args.stop:
+        if args.prompt or args.output or args.seed is not None or args.size:
+            parser.error("--start and --stop take no prompt, -o, --seed or --size")
+        if args.ref or args.lora:
+            parser.error("--start and --stop take no --ref or --lora")
+        if args.stop and args.model:
+            parser.error("--stop takes no --model")
+    elif not (args.prompt and args.output):
+        parser.error("a prompt and -o OUTPUT are required (or use --start / --stop)")
     root = repo_root if repo_root is not None else Path(__file__).resolve().parents[2]
     try:
-        print(_generate(args, root, state_dir))
+        if args.start:
+            print(_start(args, root, state_dir))
+        elif args.stop:
+            print(_stop(_port(), state_dir))
+        else:
+            print(_generate(args, root, state_dir))
     except (GenimgError, keepalive.KeepAliveError) as e:
         print(f"genimg failed: {e}", file=sys.stderr)
         return 1

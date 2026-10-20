@@ -53,8 +53,8 @@ scripts/genimg "make the fox white" --ref out/fox.png -o out/fox_white.png
 
 It goes through `run_jobs`, so the request, the settings and the log match the runner's. The `sd-server` stays loaded between calls, so
 the next call skips the model load (about 3 s): the first call starts it and prints its pid, a call that needs a different model replaces it,
-parallel calls queue, and if something else is listening on the port (8190, or `$GENIMG_PORT`) genimg refuses to touch it. Stop it with
-`kill PID`. This needs Linux (/proc, fcntl). Without `--model`, the model of the running server is used. The seed used is printed (`-1` or no `--seed` is random), an
+parallel calls queue, and if something else is listening on the port (8190, or `$GENIMG_PORT`) genimg refuses to touch it. `scripts/genimg --start [--model NAME]` loads it ahead of time with a throwaway 64x64 image (the model takes its GPU memory then, so use it
+before starting anything else that shares the GPU). Stop it with `scripts/genimg --stop` (or `kill PID`). This needs Linux (/proc, fcntl). Without `--model`, the model of the running server is used. The seed used is printed (`-1` or no `--seed` is random), an
 existing output file is never overwritten, and `runs.jsonl` goes to `<output folder>/.genimg/`. Run `scripts/genimg --help` for the rest.
 
 From Python, give `run_jobs` an explicit list of jobs, so you decide the matrix and the file names:

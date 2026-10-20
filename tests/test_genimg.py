@@ -337,6 +337,134 @@ class TestReviewFixes:
         assert "gone" in err and "did not stop" in err
 
 
+class TestStart:
+    def test_starts_the_default_model_with_the_runner_server_args(
+        self, repo, tmp_path, capsys, kept
+    ):
+        code = main(["--start"], repo_root=repo, state_dir=tmp_path / "state")
+        assert code == 0
+        assert "sd-server ready with model-a (started)" in capsys.readouterr().out
+        [call] = kept.ensured
+        assert call["model"] == "model-a"
+        assert call["port"] == 8190
+        assert FakeServer.instances[0].args == {
+            "--lora-model-dir": "/lora",
+            "--diffusion-model": "/a.gguf",
+        }
+        # The model loads on the first request, so a tiny one is made to hold the GPU memory.
+        [request] = FakeServer.instances[0].requests
+        assert (request["width"], request["height"]) == (64, 64)
+        assert request["sample_params"]["sample_steps"] == 4
+
+    def test_model_flag_picks_the_model(self, repo, tmp_path, kept):
+        main(["--start", "--model", "model-b"], repo_root=repo, state_dir=tmp_path)
+        assert kept.ensured[0]["model"] == "model-b"
+
+    def test_without_model_the_running_server_wins(self, repo, tmp_path, kept):
+        kept.running = "model-b"
+        main(["--start"], repo_root=repo, state_dir=tmp_path)
+        assert kept.ensured[0]["model"] == "model-b"
+
+    def test_already_running_is_reported(self, repo, tmp_path, capsys, kept):
+        kept.started = False
+        code = main(["--start"], repo_root=repo, state_dir=tmp_path)
+        assert code == 0
+        assert "(already running)" in capsys.readouterr().out
+
+    def test_same_args_as_an_image_call_so_the_server_is_reused(
+        self, repo, tmp_path, kept
+    ):
+        main(["--start"], repo_root=repo, state_dir=tmp_path / "state")
+        run(repo, tmp_path)
+        assert kept.ensured[0]["model"] == kept.ensured[1]["model"]
+        assert FakeServer.instances[0].args == FakeServer.instances[1].args
+
+    def test_a_failed_start_is_an_error_with_the_log_path(
+        self, repo, tmp_path, capsys, monkeypatch
+    ):
+        def broken(*a, **k):
+            raise SdCppError("server_died", "sd-server exited with code 3")
+
+        monkeypatch.setattr("prompt_runner.keepalive.ensure_server", broken)
+        code = main(["--start"], repo_root=repo, state_dir=tmp_path)
+        err = capsys.readouterr().err
+        assert code == 1
+        assert "exited with code 3" in err and "server log:" in err
+
+    def test_a_failed_warm_up_on_a_new_server_stops_it(
+        self, repo, tmp_path, capsys, kept
+    ):
+        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+        code = main(["--start"], repo_root=repo, state_dir=tmp_path)
+        assert code == 1
+        assert "out of memory" in capsys.readouterr().err
+        assert kept.stopped == 1
+
+    def test_a_failed_warm_up_on_a_warm_server_keeps_it(
+        self, repo, tmp_path, capsys, kept
+    ):
+        kept.started = False
+        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+        code = main(["--start"], repo_root=repo, state_dir=tmp_path)
+        assert code == 1
+        assert kept.stopped == 0
+
+    def test_a_dead_server_is_stopped(self, repo, tmp_path, kept):
+        kept.started = False
+        FakeServer.outcomes = [SdCppError("server_died", "gone")]
+        main(["--start"], repo_root=repo, state_dir=tmp_path)
+        assert kept.stopped == 1
+
+    def test_unknown_model_is_an_error(self, repo, tmp_path, capsys):
+        code = main(
+            ["--start", "--model", "model-x"], repo_root=repo, state_dir=tmp_path
+        )
+        assert code == 1
+        assert "unknown model 'model-x'" in capsys.readouterr().err
+
+
+class TestStop:
+    def test_stops_a_running_server(self, repo, tmp_path, capsys, kept):
+        kept.running = "model-a"
+        code = main(["--stop"], repo_root=repo, state_dir=tmp_path / "state")
+        assert code == 0
+        assert kept.stopped == 1
+        assert "stopped the sd-server" in capsys.readouterr().out
+
+    def test_nothing_running_is_not_an_error(self, repo, tmp_path, capsys, kept):
+        code = main(["--stop"], repo_root=repo, state_dir=tmp_path / "state")
+        assert code == 0
+        assert "no sd-server of genimg is running" in capsys.readouterr().out
+
+    def test_a_server_that_will_not_stop_fails(self, repo, tmp_path, capsys):
+        def stuck(path):
+            raise KeepAliveError("the sd-server (pid 7) did not stop")
+
+        with patch("prompt_runner.keepalive.stop_server", stuck):
+            code = main(["--stop"], repo_root=repo, state_dir=tmp_path / "state")
+        assert code == 1
+        assert "did not stop" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--stop", "a prompt"],
+            ["--stop", "-o", "x.png"],
+            ["--stop", "--model", "model-a"],
+            ["--start", "a prompt"],
+            ["--start", "--seed", "3"],
+            ["--start", "--size", "64x64"],
+            ["--start", "--lora", "x"],
+            ["--start", "--stop"],
+            ["a prompt"],
+        ],
+    )
+    def test_bad_combinations_are_usage_errors(self, repo, tmp_path, args):
+        with pytest.raises(SystemExit) as e:
+            main(args, repo_root=repo, state_dir=tmp_path / "state")
+        assert e.value.code == 2
+
+
 class TestLora:
     def test_extra_loras_are_added_to_the_models_own(self, repo, tmp_path):
         run(repo, tmp_path, "--lora", "a.safetensors:0.8", "--lora", "b.safetensors")

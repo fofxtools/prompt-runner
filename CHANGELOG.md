@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.3] - 2026-10-20
+
+`genimg` can now start and stop its sd-server.
+
+### genimg
+- `genimg --start [--model NAME]` starts the server and loads the model, using a throwaway 64x64 image (the server otherwise loads it on the first request).
+  Use it to hold the GPU memory before starting something else that shares the GPU.
+- `genimg --stop` stops the server once any running call is done.
+
+### Image runner
+- New helper `merged_server_args(server_defaults, model)`; `run_jobs` uses it to build each model's server flags.
+
 ## [0.2.2] - 2026-10-20
 
 New `genimg` command for single images, with an sd-server that stays loaded between calls.
