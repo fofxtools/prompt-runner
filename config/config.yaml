@@ -16,6 +16,9 @@ image_server_args:
 
 # Native sd-server request fields merged under every model's generation_options
 image_generation_defaults:
-  width: 512
-  height: 512
+  width: 1024
+  height: 1024
   seed: -1
+
+# The model genimg uses when --model is not given
+default_image_model: flux-2-klein-9b-Q4_K_M

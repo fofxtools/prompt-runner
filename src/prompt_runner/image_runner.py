@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,7 @@ class _Run:
         generation_defaults: dict[str, Any] | None,
         write_log: bool,
         total: int,
+        open_server: Callable[[str, dict[str, Any], Path], SdCppServer] | None = None,
     ) -> None:
         self.run_id = run_id
         self.run_dir_name = run_dir_name
@@ -113,6 +115,7 @@ class _Run:
         self.generation_defaults = generation_defaults
         self.log_path = out_dir / "runs.jsonl" if write_log else None
         self.total = total
+        self.open_server = open_server
         self.done = 0
         self.rows: list[dict[str, Any]] = []
         self.server_log = ""  # of the group being run, relative to out_dir
@@ -248,8 +251,11 @@ class _Run:
         print(f"Starting server: {name} ({len(group)} job(s))")
 
         rest: list[Job] = []
+        # SdCppServer is looked up here, not at import, so tests can patch it.
+        open_server = self.open_server or SdCppServer
         try:
-            with SdCppServer(self.binary, args, log_file) as server:
+            with open_server(self.binary, args, log_file) as server:
+                self.server_log = self.rel(server.log_path)
                 for index, job in enumerate(group):
                     if self.run_job(server, job, args, index):
                         rest = group[index + 1 :]
@@ -273,6 +279,7 @@ def run_jobs(
     generation_defaults: dict[str, Any] | None = None,
     skip_existing: bool = False,
     write_log: bool = True,
+    open_server: Callable[[str, dict[str, Any], Path], SdCppServer] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Generate the images of a list of jobs, one managed sd-server per distinct model setup.
@@ -295,6 +302,10 @@ def run_jobs(
         generation_defaults: Request fields under every model's generation_options
         skip_existing: Skip jobs whose output file already exists
         write_log: Set False to skip runs.jsonl (server logs are still written)
+        open_server: Called as open_server(binary, server_args, log_path) to get the
+            server for a group, used as a context manager (default: start a new
+            SdCppServer, stopped when the group is done). A kept or attached server
+            can be returned here; its own `log_path` is what the log rows record.
 
     Returns:
         The log rows of this run (jobs skipped for an existing file have none)
@@ -333,6 +344,7 @@ def run_jobs(
         generation_defaults,
         write_log,
         len(todo),
+        open_server,
     )
     for number, (args, group) in enumerate(groups.values()):
         run.run_group(number, args, group)

@@ -1,0 +1,9 @@
+#!/home/shared/ai/prompt-runner/.venv/bin/python
+"""genimg: see `genimg --help`. A thin shim; the code is in src/prompt_runner/genimg.py."""
+
+import sys
+from pathlib import Path
+
+from prompt_runner.genimg import main
+
+sys.exit(main(repo_root=Path(__file__).resolve().parent.parent))

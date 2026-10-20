@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-runner"
-version = "0.2.1"
+version = "0.2.2"
 description = "LLM evaluation toolkit for running prompts across multiple models"
 requires-python = ">=3.10"
 dependencies = [

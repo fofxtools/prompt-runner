@@ -30,14 +30,32 @@ run_llm_eval(config, prompts, models)
 
 ### Image generation
 
-Each distinct model setup runs in its own `sd-server`, started and stopped for you. Set `sd_server` (path to the binary) in
-`config/config.yaml`; model entries are in `config/image_models.yaml` (the comments at its top describe the options).
+Each distinct model setup runs in its own `sd-server`, started and stopped for you. Set `sd_server` in `config/config.yaml` to the absolute path of the binary (no `~`).
+
+```yaml
+sd_server: /home/shared/ai/stable-diffusion.cpp/build/bin/sd-server
+```
+
+Model entries are in `config/image_models.yaml` (the comments at its top describe the options).
 
 From the command line, prompts x seeds x models with a comparison sheet (sheets need `pip install -e ".[sheets]"`):
 
 ```bash
 python scripts/run_images.py config/image_prompts.yaml -o out/ --models flux-2-klein-4b-Q8_0,flux-2-klein-9b-Q4_K_M --seeds 1,2
 ```
+
+One image at a time, with `scripts/genimg` (the model is `--model`, or `default_image_model` in `config/config.yaml`; add `--ref` to edit):
+
+```bash
+scripts/genimg "a red fox in the snow" -o out/fox.png [--model NAME] [--seed N] [--size WxH]
+scripts/genimg "make the fox white" --ref out/fox.png -o out/fox_white.png
+```
+
+It goes through `run_jobs`, so the request, the settings and the log match the runner's. The `sd-server` stays loaded between calls, so
+the next call skips the model load (about 3 s): the first call starts it and prints its pid, a call that needs a different model replaces it,
+parallel calls queue, and if something else is listening on the port (8190, or `$GENIMG_PORT`) genimg refuses to touch it. Stop it with
+`kill PID`. This needs Linux (/proc, fcntl). Without `--model`, the model of the running server is used. The seed used is printed (`-1` or no `--seed` is random), an
+existing output file is never overwritten, and `runs.jsonl` goes to `<output folder>/.genimg/`. Run `scripts/genimg --help` for the rest.
 
 From Python, give `run_jobs` an explicit list of jobs, so you decide the matrix and the file names:
 

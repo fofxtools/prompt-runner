@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from types import TracebackType
-from typing import IO, Any, Literal
+from typing import Any, Literal
 
 STARTUP_TIMEOUT = 120.0  # seconds until /capabilities answers (the model loads lazily)
 REQUEST_TIMEOUT = 1800.0  # seconds per generation, including the lazy model load
@@ -58,6 +58,11 @@ def build_argv(binary: str, args: dict[str, Any]) -> list[str]:
     return argv
 
 
+def listen_argv(argv: list[str], port: int) -> list[str]:
+    """Append the flags that make sd-server listen on 127.0.0.1:`port`."""
+    return [*argv, "-l", "127.0.0.1", "--listen-port", str(port)]
+
+
 def engine_version(binary: str) -> str:
     """Return the `sd-server --version` line, e.g. 'stable-diffusion.cpp version master-964-1d0a58a, commit 1d0a58a'."""
     result = subprocess.run(
@@ -70,24 +75,44 @@ class SdCppServer:
     """
     One sd-server process serving one model, usable as a context manager.
 
-    The server cannot switch models, so start one per model. It listens on a
+    The server cannot switch models, so start one per model. By default it listens on a
     free port on 127.0.0.1 and runs in its own process group so that the whole
-    tree is stopped on exit, whatever happens.
+    tree is stopped on exit, whatever happens. With `keep=True` it is left running
+    on exit (see keepalive.py), and `attach()` wraps a server that is already running.
     """
 
-    def __init__(self, binary: str, args: dict[str, Any], log_path: Path) -> None:
+    def __init__(
+        self,
+        binary: str,
+        args: dict[str, Any],
+        log_path: Path,
+        port: int | None = None,
+        keep: bool = False,
+    ) -> None:
         self.argv = build_argv(binary, args)
         self.log_path = log_path
+        self._port = port
+        self._keep = keep
         self._proc: subprocess.Popen[bytes] | None = None
-        self._log: IO[bytes] | None = None
         self._base_url = ""
 
+    @classmethod
+    def attach(cls, port: int, log_path: Path) -> "SdCppServer":
+        """Wrap a server that is already running on `port`; this object never stops it."""
+        server = cls("", {}, log_path, port=port, keep=True)
+        server.argv = []
+        server._base_url = f"http://127.0.0.1:{port}"
+        return server
+
+    @property
+    def pid(self) -> int | None:
+        """The process id, or None for an attached server."""
+        return self._proc.pid if self._proc is not None else None
+
     def __enter__(self) -> "SdCppServer":  # noqa: PYI034 (typing.Self needs 3.11)
-        try:
-            self._start()
-        except BaseException:
-            self._stop()
-            raise
+        # A server that is already started or attached is used as is.
+        if not self._base_url:
+            self.start()
         return self
 
     def __exit__(
@@ -96,21 +121,35 @@ class SdCppServer:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        self._stop()
+        if not self._keep:
+            self.stop()
 
-    def _start(self) -> None:
-        port = free_port()
+    def start(self) -> None:
+        """Start the process and wait until it answers; if that fails, stop it and re-raise."""
+        try:
+            self.spawn()
+            self.wait_ready()
+        except BaseException:
+            self.stop()
+            raise
+
+    def spawn(self) -> None:
+        """Start the process (own session, no stdin, output to the log) without waiting for it."""
+        port = self._port or free_port()
         self._base_url = f"http://127.0.0.1:{port}"
-        self.argv = [*self.argv, "-l", "127.0.0.1", "--listen-port", str(port)]
+        self.argv = listen_argv(self.argv, port)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._log = open(self.log_path, "wb")  # noqa: SIM115 (closed in _stop)
-        self._proc = subprocess.Popen(
-            self.argv,
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        with open(self.log_path, "wb") as log:
+            self._proc = subprocess.Popen(
+                self.argv,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
 
+    def wait_ready(self) -> None:
+        """Wait until /capabilities answers; raise `server_died` if the process exits or takes too long."""
         deadline = time.monotonic() + STARTUP_TIMEOUT
         while True:
             self._raise_if_dead()
@@ -125,7 +164,16 @@ class SdCppServer:
                 )
             time.sleep(POLL_INTERVAL)
 
-    def _stop(self) -> None:
+    def ready(self) -> bool:
+        """Whether /capabilities answers right now."""
+        try:
+            self._http("GET", "/sdcpp/v1/capabilities", timeout=2)
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def stop(self) -> None:
+        """Stop the process we started (SIGTERM to its group, then SIGKILL); no-op if attached."""
         proc = self._proc
         if proc is not None and proc.poll() is None:
             self._signal_group(signal.SIGTERM)
@@ -134,9 +182,6 @@ class SdCppServer:
             except subprocess.TimeoutExpired:
                 self._signal_group(signal.SIGKILL)
                 proc.wait()
-        if self._log is not None:
-            self._log.close()
-            self._log = None
 
     def _signal_group(self, sig: signal.Signals) -> None:
         if self._proc is None:
@@ -203,10 +248,10 @@ class SdCppServer:
                 error = status.get("error") or {}
                 raise SdCppError("job_failed", error.get("message") or f"job {state}")
             if time.monotonic() > deadline:
-                self._stop()
+                self.stop()
                 raise SdCppError(
                     "server_died",
-                    f"request timed out after {REQUEST_TIMEOUT:.0f}s (server killed)",
+                    f"request timed out after {REQUEST_TIMEOUT:.0f}s (server stopped)",
                 )
             time.sleep(POLL_INTERVAL)
 

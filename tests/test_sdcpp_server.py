@@ -2,68 +2,17 @@
 
 import json
 import os
-import stat
-import sys
-from pathlib import Path
 
 import pytest
 
-from prompt_runner.sdcpp_server import SdCppError, SdCppServer, build_argv
-
-FAKE_SERVER = """\
-#!{python}
-import base64, http.server, json, os, sys
-
-args = sys.argv
-port = int(args[args.index("--listen-port") + 1])
-mode = args[args.index("--mode") + 1] if "--mode" in args else "ok"
-record = args[args.index("--record") + 1] if "--record" in args else None
-if mode == "exit":
-    sys.exit(3)
-PNG = base64.b64encode(b"fakepng").decode()
-
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
-
-    def send(self, code, obj):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        if self.path.endswith("/capabilities"):
-            self.send(200, {{}})
-        elif mode == "die":
-            os._exit(9)
-        elif mode == "fail":
-            self.send(200, {{"status": "failed", "error": {{"message": "out of memory"}}}})
-        else:
-            self.send(200, {{"status": "completed", "result": {{"images": [{{"b64_json": PNG}}]}}}})
-
-    def do_POST(self):
-        body = self.rfile.read(int(self.headers["Content-Length"]))
-        if record:
-            open(record, "wb").write(body)
-        if mode == "reject":
-            self.send(400, {{"error": "bad request"}})
-        else:
-            self.send(202, {{"id": "job_1"}})
-
-
-http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
-"""
-
-
-@pytest.fixture
-def fake_binary(tmp_path: Path) -> str:
-    path = tmp_path / "fake-sd-server"
-    path.write_text(FAKE_SERVER.format(python=sys.executable))
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
-    return str(path)
+from prompt_runner import sdcpp_server
+from prompt_runner.sdcpp_server import (
+    SdCppError,
+    SdCppServer,
+    build_argv,
+    free_port,
+    listen_argv,
+)
 
 
 def alive(pid: int) -> bool:
@@ -156,3 +105,68 @@ class TestSdCppServer:
             SdCppServer(str(tmp_path / "nope"), {}, tmp_path / "m.log"),
         ):
             pass
+
+
+class TestListenArgv:
+    def test_appends_the_listen_flags(self):
+        assert listen_argv(["sd", "--vae", "v"], 8190) == [
+            "sd",
+            "--vae",
+            "v",
+            "-l",
+            "127.0.0.1",
+            "--listen-port",
+            "8190",
+        ]
+
+
+class TestKeptAndAttachedServers:
+    def test_fixed_port_and_stdin_from_devnull(self, fake_binary, tmp_path):
+        port = free_port()
+        with SdCppServer(fake_binary, {}, tmp_path / "m.log", port=port) as server:
+            assert server.argv[-2:] == ["--listen-port", str(port)]
+            assert server.pid is not None
+            assert os.readlink(f"/proc/{server.pid}/fd/0") == "/dev/null"
+            assert server.ready()
+
+    def test_keep_leaves_the_process_running_on_exit(self, fake_binary, tmp_path):
+        with SdCppServer(fake_binary, {}, tmp_path / "m.log", keep=True) as server:
+            pid = server.pid
+        assert pid is not None and alive(pid)
+        server.stop()
+        assert not alive(pid)
+
+    def test_attach_generates_and_never_stops_the_server(self, fake_binary, tmp_path):
+        port = free_port()
+        started = SdCppServer(fake_binary, {}, tmp_path / "m.log", port=port, keep=True)
+        started.start()
+        try:
+            with SdCppServer.attach(port, tmp_path / "m.log") as attached:
+                assert attached.pid is None
+                assert attached.generate({"prompt": "x"}) == [b"fakepng"]
+            assert started.pid is not None and alive(started.pid)
+            attached.stop()  # a no-op: there is no process to stop
+            assert started.ready()
+        finally:
+            started.stop()
+
+    def test_ready_is_false_when_nothing_listens(self, tmp_path):
+        assert not SdCppServer.attach(free_port(), tmp_path / "m.log").ready()
+
+    def test_request_timeout_on_an_attached_server_kills_nothing(
+        self, fake_binary, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(sdcpp_server, "REQUEST_TIMEOUT", 0.3)
+        monkeypatch.setattr(sdcpp_server, "POLL_INTERVAL", 0.05)
+        port = free_port()
+        started = SdCppServer(
+            fake_binary, {"--mode": "slow"}, tmp_path / "m.log", port=port, keep=True
+        )
+        started.start()
+        try:
+            with pytest.raises(SdCppError) as info:
+                SdCppServer.attach(port, tmp_path / "m.log").generate({"prompt": "x"})
+            assert info.value.kind == "server_died"
+            assert started.pid is not None and alive(started.pid)
+        finally:
+            started.stop()

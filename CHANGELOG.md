@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.2.2] - 2026-10-20
+
+New `genimg` command for single images, with an sd-server that stays loaded between calls.
+
+### genimg
+- `scripts/genimg "prompt" -o out.png` makes one image with any model in `image_models.yaml` (`--model`, `--seed`, `--size`, `--lora`, and
+  `--ref` to edit an image). It goes through `run_jobs`, so settings and logs match the runner; `runs.jsonl` is written to `<output folder>/.genimg/`.
+- The model is `--model`, else the model of the running server, else the new `default_image_model` in `config.yaml`.
+- The sd-server stays loaded, so the next call skips the model load (about 3 s faster for Klein 9B at 1024x1024). The first call starts it and
+  prints its pid (stop it with `kill PID`), a different model replaces it, and parallel calls queue. If something else is listening on the
+  port (8190, or `GENIMG_PORT`), genimg refuses it and never kills it. Linux only (it uses `/proc` and `fcntl`).
+- The seed used is printed, and an existing output file is never overwritten.
+- Breaking, compared with the old standalone script: it no longer uses a hand-started sd-server (`GENIMG_URL` is gone), steps and CFG come from the
+  model entry instead of being hard-coded, the size comes from `image_generation_defaults` (also with `--ref`), and it needs the project venv.
+
+### Image runner
+- `run_jobs(..., open_server=...)` lets the caller supply the server for a group. The default is unchanged: a new server, stopped afterwards.
+- `SdCppServer` can run on a fixed `port`, be left running (`keep=True`) or `attach()` to a running server. `spawn()`, `wait_ready()`, `ready()`,
+  `stop()` and `pid` are now public. The server is started without stdin.
+
+### Config
+- `image_generation_defaults` is now 1024x1024 (was 512x512), so runner batches without an explicit size render at 1024x1024.
+- Added `default_image_model` (used by `genimg`).
+- Removed `--max-vram: 10` from the Klein and Qwen-Image 2.1 entries. On the current stable-diffusion.cpp (master-964) uncapped
+  runs are as fast or faster for every model tested (Juggernaut, Klein 4B and 9B, Qwen 2.1) up to 2048x2048, never ran out of memory, and
+  do not depend on free RAM; the cap now only saves 2-3.5 GiB of VRAM. kv-merge Q8_0 and Juggernaut were 20% slower with it.
+
+### Image models
+- Added `qwen-image-2.1-Q6_K_XL` (replaces the Q4_K_M entry; 40 steps), `qwen-image-2.1-turbo-Q6_K_XL` (8 steps, about 8x faster, similar
+  text quality) and `qwen-image-2.1-Q6_K_XL-Lightning` (4-step LoRA, about 5 s per image).
+- Added `Qwen-Image-Edit-2511-Q4_K_M` and a `-Lightning` variant (4 steps).
+- Added `snofsSexNudesAndOther_v14Klein9bDistilled_full_Q6_K_snofs_lora` (the SNOFS Q6_K checkpoint with its LoRA applied per request).
+- Added `flux2-dev-Q4_K_M-Turbo` (FLUX.2 dev with the fal Turbo LoRA, 8 steps, about half the time).
+- `flux2-dev-Q4_K_M` now points to the Unsloth GGUF (same file).
+
+### Tests and docs
+- `pytest -m all` runs every test, the GPU smoke test included. A shared fake sd-server lives in `tests/conftest.py`.
+- New docs: `rendered-text-image-models.md` (in-image paragraph text: OpenAI, DeepInfra and local Qwen models), `llama-cpp-vlm-bench.md` and
+  `venice-vs-local-bench.md`. The README shows how to set `sd_server`.
+
 ## [0.2.1] - 2026-10-14
 
 Image generation now takes an explicit list of jobs instead of the config-driven `run_image_eval()`. This is a breaking change.

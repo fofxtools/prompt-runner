@@ -5,8 +5,6 @@
 #   true gives a bare flag, false/null omits it, anything else gives `flag value`.
 #   - Paths: --diffusion-model (or --model for all-in-one checkpoints), --llm, --llm_vision,
 #     --clip_l, --clip_g, --t5xxl, --vae
-#   - --max-vram 10 on the Klein and Qwen-Image 2.1 entries: caps VRAM so large images (1536x1536) don't OOM, at some speed cost on
-#     small ones. Left off elsewhere, where sd.cpp's default auto-fit is faster (FLUX.2 dev is ~2.5x slower with it).
 #   - A model's value wins over image_server_args; `false` drops a global flag (e.g. --sage-attn: false)
 #
 # generation_options: native sd-server request fields, merged (recursively) between
@@ -53,9 +51,9 @@
     --model: /home/shared/ai/diffusion/checkpoints/juggernautXL_ragnarokBy.safetensors
 
 # Juggernaut XL v9 Lightning (single-file checkpoint, VAE and text encoders included).
-# https://huggingface.co/RunDiffusion/Juggernaut-XL-Lightning
 # Model card: DPM++ SDE Karras, 5-7 steps, CFG 1.5-2.0, at least 1024x1024. sd.cpp has no plain DPM++ SDE;
 # dpm++2m_sde needs the karras scheduler (without it the images are full of colored noise).
+# https://huggingface.co/RunDiffusion/Juggernaut-XL-Lightning
 - name: Juggernaut_RunDiffusionPhoto2_Lightning_4Steps
   server_args:
     --model: /home/shared/ai/diffusion/checkpoints/Juggernaut_RunDiffusionPhoto2_Lightning_4Steps.safetensors
@@ -63,8 +61,8 @@
     sample_params: {sample_method: dpm++2m_sde, scheduler: karras, sample_steps: 6, guidance: {txt_cfg: 1.8}}
 
 # Juggernaut XI Lightning (single-file checkpoint, VAE and text encoders included). License: CC BY-NC-ND 4.0 (no commercial use).
-# https://huggingface.co/RunDiffusion/Juggernaut-XI-Lightning
 # Model card: same settings as above.
+# https://huggingface.co/RunDiffusion/Juggernaut-XI-Lightning
 - name: Juggernaut-XI-byRunDiffusion-Lightning
   server_args:
     --model: /home/shared/ai/diffusion/checkpoints/Juggernaut-XI-byRunDiffusion-Lightning.safetensors
@@ -153,15 +151,49 @@
   generation_options:
     sample_params: {sample_steps: 20, guidance: {txt_cfg: 1.0}}
 
-# Qwen-Image 2.1 (best one-shot renderer for long in-image text). cfg 4.0, 25 steps, ~50-70s per image.
-- name: qwen-image-2.1-Q4_K_M
+# Qwen-Image 2.1 (best one-shot renderer for long in-image text). cfg 4.0, 40 steps (the Qwen card's value; at 25 steps paragraph text
+# was much worse), ~65s per image at 1024x1024.
+# https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF
+- name: qwen-image-2.1-Q6_K_XL
   server_args:
-    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q4_K_M.gguf
+    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q6_K_XL.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
     --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
-    --max-vram: 10
   generation_options:
-    sample_params: {sample_steps: 25, guidance: {txt_cfg: 4.0}}
+    sample_params: {sample_steps: 40, guidance: {txt_cfg: 4.0}}
+
+# Qwen-Image 2.1 Turbo (Qwen's official 8-step distillation; Qwen Research License, non-commercial). 8 steps, cfg 1.0, euler, the
+# fixed sigma schedule (same as sd-cli `--sigmas qwen-image-2.1-turbo`). ~8s per image at 1024x1024, about 8x faster than the entry
+# above with similar paragraph-text quality in a blind test.
+# https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF
+- name: qwen-image-2.1-turbo-Q6_K_XL
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-turbo-Q6_K_XL.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
+  generation_options:
+    sample_params:
+      sample_method: euler
+      guidance: {txt_cfg: 1.0}
+      custom_sigmas: [1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0]
+
+# Qwen-Image 2.1 + the lightx2v Lightning LoRA (4-step DMD distillation; ~5s per image at 1024x1024, no CFG). Same server as
+# qwen-image-2.1-Q6_K_XL, so other 2.1 LoRAs can be added to `lora`.
+# Save the LoRA as pytorch_lora_weights.safetensors in the LoRA folder. The sigmas are the card's 4-step schedule after the
+# resolution-dependent exponential shift, worked out for 1024x1024. For other sizes drop custom_sigmas and use sample_steps: 4
+# (sd.cpp's own schedule; in a 16-image test it was a bit less reliable on text).
+# https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning
+- name: qwen-image-2.1-Q6_K_XL-Lightning
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q6_K_XL.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
+  generation_options:
+    lora: [{path: pytorch_lora_weights.safetensors, multiplier: 1.0}]
+    sample_params:
+      sample_method: euler
+      guidance: {txt_cfg: 1.0}
+      custom_sigmas: [1.0, 0.857, 0.667, 0.4, 0.0]
 
 # --vae must be the native/ComfyUI-split-format file (qwen_image_vae.safetensors) - the
 # diffusers-format VAE also in vae/ (Qwen2.5-VL-7B-Instruct-diffusion_pytorch_model.safetensors)
@@ -176,6 +208,34 @@
   generation_options:
     sample_params: {sample_steps: 20, guidance: {txt_cfg: 2.5}}
 
+# Qwen-Image-Edit-2511 (successor to 2509: better identity/multi-person consistency, less drift). Same encoder, vision file and VAE as
+# 2509, same cfg 2.5 / 20 steps as the sd.cpp docs example. qwen_image_zero_cond_t=true is required (without it edit quality degrades).
+# Needs ref_images: [...].
+# https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF
+- name: Qwen-Image-Edit-2511-Q4_K_M
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-edit-2511-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    --llm_vision: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf
+    --vae: /home/shared/ai/vae/qwen_image_vae.safetensors
+    --model-args: qwen_image_zero_cond_t=true
+  generation_options:
+    sample_params: {sample_steps: 20, guidance: {txt_cfg: 2.5}}
+
+# Qwen-Image-Edit-2511 + the lightx2v Lightning LoRA (4 steps, no CFG, flow shift 3). Same server as Qwen-Image-Edit-2511-Q4_K_M.
+# Use the bf16 LoRA file.
+# https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning
+- name: Qwen-Image-Edit-2511-Q4_K_M-Lightning
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-edit-2511-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    --llm_vision: /home/shared/ai/text_encoders/Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf
+    --vae: /home/shared/ai/vae/qwen_image_vae.safetensors
+    --model-args: qwen_image_zero_cond_t=true
+  generation_options:
+    lora: [{path: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, multiplier: 1.0}]
+    sample_params: {sample_method: euler, sample_steps: 4, flow_shift: 3.0, guidance: {txt_cfg: 1.0}}
+
 # FLUX.2 Klein 4B stock (BFL bf16 safetensors) with the Unsloth Q5_K_XL Qwen3-4B text encoder.
 # (qwen_3_4b_fp4_flux2.safetensors is ComfyUI-quantized and unsupported by stable-diffusion.cpp.)
 - name: flux-2-klein-4b
@@ -183,7 +243,6 @@
     --diffusion-model: /home/shared/ai/diffusion/checkpoints/flux-2-klein-4b.safetensors
     --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -193,7 +252,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q4_K_M.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -202,7 +260,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q6_K.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -211,7 +268,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-4b-Q8_0.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-4B-UD-Q5_K_XL.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -221,7 +277,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-Q4_K_M.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -232,7 +287,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/PornMaster_Flux2Klein_v4_Turbo_Q6_K.gguf
     --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -244,7 +298,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q8_0.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -255,7 +308,6 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux-2-klein-9b-kv-merge-Q5_K.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-8B-Q4_K_M.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -267,7 +319,6 @@
     --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_fp8.safetensors
     --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -278,8 +329,18 @@
     --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q6_K.gguf
     --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
+    sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
+
+# The same SNOFS Q6_K checkpoint with the SNOFS LoRA (klein_snofs_v1_4) applied on top at request time (+3-4 s per image).
+# https://civitai.red/models/1972981/snofs-sex-nudes-other-fun-stuff
+- name: snofsSexNudesAndOther_v14Klein9bDistilled_full_Q6_K_snofs_lora
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q6_K.gguf
+    --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  generation_options:
+    lora: [{path: klein_snofs_v1_4.safetensors, multiplier: 1.0}]
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
 # FLUX.2 Klein 9B SNOFS. Converted from the original fp8 safetensors to Q5_K GGUF via `sd-cli -M convert`
@@ -290,7 +351,6 @@
     --diffusion-model: /home/shared/ai/diffusion/checkpoints/snofsSexNudesAndOther_v14Klein9bDistilled_full_Q5_K.gguf
     --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
@@ -300,12 +360,12 @@
     --diffusion-model: /home/shared/ai/diffusion/gguf/pGGUFSNOFSSexNudesAndOther_v14Distilled_pruned_q5KM.gguf
     --llm: /home/shared/ai/text_encoders/flux2-klein-9b-uncensored-q4_k_m.gguf
     --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
-    --max-vram: 10
   generation_options:
     sample_params: {sample_steps: 4, guidance: {txt_cfg: 1.0}}
 
-# FLUX.2 dev (32B, city96 Q4_K_M GGUF) with the Mistral-Small-3.2-24B text encoder. 32GB of weights on a 16GB card:
+# FLUX.2 dev (32B, Unsloth Q4_K_M GGUF) with the Mistral-Small-3.2-24B text encoder. 32GB of weights on a 16GB card:
 # only works through sd.cpp's auto-fit (streams weights from disk, ~80s per 512x512 image at 20 steps). Same FLUX.2 VAE as Klein.
+# https://huggingface.co/unsloth/FLUX.2-dev-GGUF
 - name: flux2-dev-Q4_K_M
   server_args:
     --diffusion-model: /home/shared/ai/diffusion/gguf/flux2-dev-Q4_K_M.gguf
@@ -313,3 +373,19 @@
     --vae: /home/shared/ai/vae/flux2-vae.safetensors
   generation_options:
     sample_params: {sample_steps: 20, guidance: {txt_cfg: 1.0}}
+
+# FLUX.2 dev + the fal Turbo LoRA (8-step distillation; FLUX dev non-commercial license). Same server as flux2-dev-Q4_K_M.
+# 8 steps with the card's pre-shifted sigmas (plus the final 0) and guidance 2.5; ~110s vs ~205s per 1024x1024 image.
+# Use the ComfyUI file (comfy/Flux_2-Turbo-LoRA_comfyui.safetensors, linked below): sd.cpp applies all 340 of its tensors, but only
+# 134 of the 340 in the diffusers-format flux.2-turbo-lora.safetensors (the images come out blurry and unfinished).
+# https://huggingface.co/fal/FLUX.2-dev-Turbo/tree/main/comfy
+- name: flux2-dev-Q4_K_M-Turbo
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/flux2-dev-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf
+    --vae: /home/shared/ai/vae/flux2-vae.safetensors
+  generation_options:
+    lora: [{path: Flux_2-Turbo-LoRA_comfyui.safetensors, multiplier: 1.0}]
+    sample_params:
+      guidance: {txt_cfg: 1.0, distilled_guidance: 2.5}
+      custom_sigmas: [1.0, 0.6509, 0.4374, 0.2932, 0.1893, 0.1108, 0.0495, 0.00031, 0.0]

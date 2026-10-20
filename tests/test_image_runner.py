@@ -297,6 +297,45 @@ class TestRunJobsGrouping:
         assert json.dumps(m, sort_keys=True) == before
 
 
+class TestOpenServer:
+    def test_open_server_supplies_the_server_instead_of_a_new_one(self, tmp_path):
+        server = FakeServer("sd", {}, tmp_path / "kept.log")
+        FakeServer.instances.clear()
+        calls: list[tuple[str, dict[str, Any], Path]] = []
+
+        def open_server(binary: str, args: dict[str, Any], log_path: Path) -> Any:
+            calls.append((binary, args, log_path))
+            return server
+
+        m = model("a", **{"--vae": "v"})
+        run(tmp_path, [job(tmp_path, "one", m)], open_server=open_server)
+
+        assert FakeServer.instances == []  # nothing else was started
+        assert len(server.requests) == 1
+        binary, args, log_path = calls[0]
+        assert binary == "/bin/sd-server"
+        assert args == m["server_args"]
+        assert log_path.parent == tmp_path / "server_logs"
+
+    def test_rows_record_the_supplied_servers_own_log(self, tmp_path):
+        server = FakeServer("sd", {}, Path("/elsewhere/kept.log"))
+        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+
+        run(
+            tmp_path,
+            [job(tmp_path, "one", model("a"))],
+            open_server=lambda binary, args, log_path: server,
+        )
+
+        assert read_log(tmp_path)[0]["server_log"] == "/elsewhere/kept.log"
+
+    def test_the_default_still_starts_a_server_per_group(self, tmp_path):
+        run(tmp_path, [job(tmp_path, "one", model("a"))])
+        assert len(FakeServer.instances) == 1
+        log = FakeServer.instances[0].log_path
+        assert log.parent == tmp_path / "server_logs"
+
+
 class TestRunJobsValidation:
     def test_duplicate_output_paths_raise(self, tmp_path):
         m = model("m")

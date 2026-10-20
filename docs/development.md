@@ -24,5 +24,7 @@ mypy tests/
 
 ## Testing (similar to PHPUnit)
 ```
-pytest tests/
+pytest         # everything except the GPU test
+pytest -m gpu  # only the GPU smoke test (needs a free GPU, sd-server and the Klein 4B files)
+pytest -m all  # everything, GPU test included
 ```
