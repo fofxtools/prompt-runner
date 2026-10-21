@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.3.0] - 2026-10-21
+
+The LLM runner now uses llama.cpp instead of Ollama (breaking), and there is a new `llm` command. Image generation works as before.
+
+### LLM runner
+- Breaking: `run_llm_eval` starts a `llama serve` per model instead of using Ollama; the `ollama` dependency is gone.
+- `config.yaml`: new `llama_server` (the `llama` executable) and `llm_server_args` (flags for every model). `llm_generation_defaults` uses `max_tokens` (was `num_predict`; now 16384, not unlimited) and `seed`, with no `temperature`.
+  Ollama's `num_predict`, `num_ctx`, `num_batch`, `num_gpu` and `num_thread` are refused with a hint, because llama-server would ignore them silently.
+- `llm_models.yaml`: entries have `server_args` (`-m`, `--mmproj`, ...) and `generation_options`, like the image models. It lists the 14 local GGUF models, each with a source link and the sampling its model card recommends.
+- New `run_llm_jobs(jobs, ...)` with `LlmJob`, shaped like `run_jobs`. `run_llm_eval(config, prompts, models, options=None)` builds the jobs; `options` sets request fields for every chat. There is no completion mode and no `prompt_filter`.
+- Images: a prompt can have `images:` (file paths), and a user message in `messages` can have its own. A missing file, or images for a model without `--mmproj`, are refused before any server starts.
+- Results: `<run folder>/llm/runs.jsonl` has one row per prompt and model, with the thinking apart from the answer, finish reason, tokens, speeds, seed, server flags, model load time and the sampling in effect. The image paths are logged, not the images.
+  `summary.json` and the per-mode JSON files are gone.
+
+### llm
+- New `llm` command: `llm list` (models, size on disk, which is loaded), `llm run MODEL [PROMPT]` (one reply, a piped prompt, or a chat with history; `--system`, `--image`, repeatable) and `llm stop`.
+- The answer goes to stdout and the thinking to stderr. The server stays loaded between calls on port 8191 (`LLM_PORT`), and a call for another model replaces it. With a prompt, stdin is never read.
+
+### Servers
+- New `server_process.py` (`ServerProcess`, `ServerError`) and `llama_server.py` (`LlamaServer.chat()` streams the reply). `SdCppServer` is now a small subclass.
+- Breaking: `SdCppError` is now `ServerError`; `build_argv`, `free_port` and `engine_version` moved to `server_process`; `STARTUP_TIMEOUT` is a class attribute.
+- `keepalive` is generic: it takes a `KeptServer` made by `kept_server(tool, server_class, port)`.
+- `merge_image_options` is now `merge_options`; the old flat `merge_options` and `create_result_structure` are gone. `merged_server_args` moved to `utils`, next to `random_seed`.
+
+### genimg
+- The kept server's files are now `/tmp/genimg-<port>.{lock,json,log}` (were `genimg-sd-<port>`). Run `genimg --stop` before upgrading, or genimg will not recognize the running server.
+
+### Tests
+- Fixed a test that failed about 1 time in 100 (it read a just-started process's command line too early).
+
 ## [0.2.3] - 2026-10-20
 
 `genimg` can now start and stop its sd-server.

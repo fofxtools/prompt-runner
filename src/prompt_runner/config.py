@@ -41,6 +41,14 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     return config
 
 
+def _check_images(where: str, images: Any) -> None:
+    """Raise unless `images` is a list of file path strings."""
+    if not isinstance(images, list) or not all(
+        isinstance(path, str) and path for path in images
+    ):
+        raise TypeError(f"{where} field 'images' must be a list of file paths")
+
+
 def load_llm_prompts(
     prompts_path: str = "config/llm_prompts.yaml",
 ) -> list[dict[str, Any]]:
@@ -49,10 +57,14 @@ def load_llm_prompts(
 
     Each prompt must have:
     - id: string matching regex ^[a-z0-9_]+$
-    - prompt: the prompt text (for completion mode or simple chat)
+    - prompt: the prompt text (sent as one user message), optionally with
+      images: a list of image file paths sent with it (before the text)
       OR
-    - messages: list of message dicts (for multi-turn chat)
-    - options: (optional) dict of generation options
+    - messages: list of message dicts (system, user and assistant turns); a user
+      message can have its own images list
+    - options: (optional) dict of request fields for llama-server (temperature,
+      max_tokens, seed, chat_template_kwargs, ...), merged over the model's
+      generation_options
 
     Args:
         prompts_path: Path to the prompts.yaml file (default: config/llm_prompts.yaml)
@@ -105,6 +117,13 @@ def load_llm_prompts(
             )
 
         # Validate messages format if present
+        if has_messages and "images" in prompt:
+            raise ValueError(
+                f"Prompt '{prompt_id}': put 'images' in the message that has them"
+            )
+        if "images" in prompt:
+            _check_images(f"Prompt '{prompt_id}'", prompt["images"])
+
         if has_messages:
             if not isinstance(prompt["messages"], list):
                 raise TypeError(f"Prompt '{prompt_id}' field 'messages' must be a list")
@@ -126,6 +145,15 @@ def load_llm_prompts(
                     raise ValueError(
                         f"Prompt '{prompt_id}' message at index {msg_idx} has invalid 'role'. "
                         f"Must be one of: {valid_roles}"
+                    )
+                if "images" in msg:
+                    if msg["role"] != "user":
+                        raise ValueError(
+                            f"Prompt '{prompt_id}' message at index {msg_idx}: only a user message can have images"
+                        )
+                    _check_images(
+                        f"Prompt '{prompt_id}' message at index {msg_idx}",
+                        msg["images"],
                     )
 
         if "options" in prompt and not isinstance(prompt["options"], dict):
@@ -153,14 +181,17 @@ def load_llm_models(
     models_path: str = "config/llm_models.yaml",
 ) -> list[dict[str, Any]]:
     """
-    Load and validate models from the models configuration file.
+    Load and validate LLM models from the models configuration file.
 
     The file must contain a YAML list where each model has:
     - name: the model identifier
-    - options: (optional) dict of default generation options
+    - server_args: dict of literal `llama serve` flags (-m, --mmproj, -c, ...);
+      true gives a bare flag, false/null omits it
+    - generation_options: (optional) dict of default request fields for this model
+      (temperature, max_tokens, chat_template_kwargs, ...)
 
     Args:
-        models_path: Path to the models.yaml file (default: config/llm_models.yaml)
+        models_path: Path to the llm_models.yaml file (default: config/llm_models.yaml)
 
     Returns:
         List of model dictionaries
@@ -190,9 +221,23 @@ def load_llm_models(
         if "name" not in model:
             raise ValueError(f"Model at index {i} missing required 'name' field")
 
-        if "options" in model and not isinstance(model["options"], dict):
+        label = model["name"]
+        if "server_args" not in model:
+            raise ValueError(f"Model '{label}' missing required 'server_args' field")
+
+        if not isinstance(model["server_args"], dict):
+            raise TypeError(f"Model '{label}' field 'server_args' must be a dictionary")
+
+        if "options" in model:
+            raise ValueError(
+                f"Model '{label}' has 'options': it is called 'generation_options' now"
+            )
+
+        if "generation_options" in model and not isinstance(
+            model["generation_options"], dict
+        ):
             raise TypeError(
-                f"Model '{model.get('name', i)}' field 'options' must be a dictionary"
+                f"Model '{label}' field 'generation_options' must be a dictionary"
             )
 
     return models

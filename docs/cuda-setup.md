@@ -75,7 +75,7 @@ To check the GPU is used, watch `nvidia-smi` during a run.
 
 ## llama-cpp-python (optional)
 
-Not used by prompt-runner itself (the LLM runner uses Ollama); only for local experiments. From the
+Not used by prompt-runner itself (the LLM runner uses a llama.cpp `llama serve`); only for local experiments. From the
 [llama-cpp-python README](https://github.com/abetlen/llama-cpp-python), build with CUDA:
 
 ```bash

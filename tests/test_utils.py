@@ -1,12 +1,10 @@
 """Unit tests for src/utils.py"""
 
-import pytest
-
 from prompt_runner.utils import (
-    create_result_structure,
     generate_run_identifiers,
-    merge_image_options,
     merge_options,
+    merged_server_args,
+    random_seed,
     sanitize_fs_name,
 )
 
@@ -120,27 +118,6 @@ class TestGenerateRunIdentifiers:
         assert run_id_1 != run_id_2  # Random suffix ensures uniqueness
 
 
-class TestCreateResultStructure:
-    """Tests for create_result_structure function."""
-
-    def test_creates_directory(self, tmp_path):
-        """Test that directory is created."""
-        run_dir_name = "2026-01-08_12-34-56Z"
-        result = create_result_structure(run_dir_name, str(tmp_path))
-
-        assert result.exists()
-        assert result.is_dir()
-        assert result == tmp_path / run_dir_name
-
-    def test_raises_if_exists(self, tmp_path):
-        """Test that FileExistsError is raised if directory exists."""
-        run_dir_name = "2026-01-08_12-34-56Z"
-        create_result_structure(run_dir_name, str(tmp_path))
-
-        with pytest.raises(FileExistsError):
-            create_result_structure(run_dir_name, str(tmp_path))
-
-
 class TestMergeOptions:
     """Tests for merge_options function."""
 
@@ -151,55 +128,8 @@ class TestMergeOptions:
 
     def test_global_only(self):
         """Test that global defaults are returned when others are None."""
-        global_opts = {"temperature": 0.5, "num_predict": 256}
-        result = merge_options(global_opts, None, None)
-        assert result == {"temperature": 0.5, "num_predict": 256}
-
-    def test_model_only(self):
-        """Test that model options are returned when others are None."""
-        model_opts = {"temperature": 0.7, "num_predict": 100}
-        result = merge_options(None, model_opts, None)
-        assert result == {"temperature": 0.7, "num_predict": 100}
-
-    def test_prompt_only(self):
-        """Test that prompt options are returned when others are None."""
-        prompt_opts = {"temperature": 0.9}
-        result = merge_options(None, None, prompt_opts)
-        assert result == {"temperature": 0.9}
-
-    def test_model_overrides_global(self):
-        """Test that model options override global defaults."""
-        global_opts = {"temperature": 0.5, "num_predict": 256}
-        model_opts = {"temperature": 0.7}
-        result = merge_options(global_opts, model_opts, None)
-
-        assert result["temperature"] == 0.7  # Overridden by model
-        assert result["num_predict"] == 256  # From global
-
-    def test_prompt_overrides_all(self):
-        """Test that prompt options override both global and model options."""
-        global_opts = {"temperature": 0.5, "num_predict": 256}
-        model_opts = {"temperature": 0.7, "num_predict": 100}
-        prompt_opts = {"temperature": 0.9, "top_p": 0.95}
-        result = merge_options(global_opts, model_opts, prompt_opts)
-
-        assert result["temperature"] == 0.9  # Overridden by prompt
-        assert result["num_predict"] == 100  # From model
-        assert result["top_p"] == 0.95  # From prompt
-
-
-class TestMergeImageOptions:
-    """Tests for merge_image_options function."""
-
-    def test_all_none(self):
-        """Test that empty dict is returned when all are None."""
-        result = merge_image_options(None, None, None)
-        assert result == {}
-
-    def test_global_only(self):
-        """Test that global defaults are returned when others are None."""
         global_opts = {"width": 512, "height": 512}
-        result = merge_image_options(global_opts, None, None)
+        result = merge_options(global_opts, None, None)
         assert result == {"width": 512, "height": 512}
 
     def test_prompt_overrides_all(self):
@@ -207,7 +137,7 @@ class TestMergeImageOptions:
         global_opts = {"width": 512, "cfg_scale": 7.0}
         model_opts = {"cfg_scale": 1.0, "sample_steps": 6}
         prompt_opts = {"seed": 42, "cfg_scale": 3.5}
-        result = merge_image_options(global_opts, model_opts, prompt_opts)
+        result = merge_options(global_opts, model_opts, prompt_opts)
 
         assert result["width"] == 512  # From global
         assert result["sample_steps"] == 6  # From model
@@ -219,7 +149,7 @@ class TestMergeImageOptions:
         global_opts = {"sample_params": {"sample_steps": 4, "scheduler": "discrete"}}
         model_opts = {"sample_params": {"sample_steps": 20}, "lora": [{"path": "a"}]}
         prompt_opts = {"lora": [{"path": "b", "multiplier": 0.5}]}
-        result = merge_image_options(global_opts, model_opts, prompt_opts)
+        result = merge_options(global_opts, model_opts, prompt_opts)
 
         assert result["sample_params"] == {"sample_steps": 20, "scheduler": "discrete"}
         assert result["lora"] == [{"path": "b", "multiplier": 0.5}]
@@ -227,7 +157,7 @@ class TestMergeImageOptions:
     def test_result_shares_no_state_with_inputs(self):
         """Mutating the result must not change the inputs."""
         model_opts = {"sample_params": {"sample_steps": 4}, "lora": [{"path": "a"}]}
-        result = merge_image_options(None, model_opts, None)
+        result = merge_options(None, model_opts, None)
         result["sample_params"]["sample_steps"] = 99
         result["lora"].append({"path": "b"})
 
@@ -235,3 +165,24 @@ class TestMergeImageOptions:
             "sample_params": {"sample_steps": 4},
             "lora": [{"path": "a"}],
         }
+
+
+class TestMergedServerArgs:
+    def test_the_models_flags_win_over_the_defaults(self):
+        model = {"name": "m", "server_args": {"-c": 8192, "-m": "/m.gguf"}}
+        assert merged_server_args({"-c": 4096, "-np": 1}, model) == {
+            "-c": 8192,
+            "-np": 1,
+            "-m": "/m.gguf",
+        }
+
+    def test_no_defaults(self):
+        model = {"name": "m", "server_args": {"-m": "/m.gguf"}}
+        assert merged_server_args(None, model) == {"-m": "/m.gguf"}
+
+
+class TestRandomSeed:
+    def test_fits_a_32_bit_seed(self):
+        seeds = {random_seed() for _ in range(50)}
+        assert all(0 <= seed < 2**31 for seed in seeds)
+        assert len(seeds) > 1

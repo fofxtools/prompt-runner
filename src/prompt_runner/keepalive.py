@@ -1,7 +1,7 @@
-"""Keep one sd-server running between genimg calls.
+"""Keep one server running between calls of a command-line tool (genimg, llm).
 
 A call starts the model's server if none is ours, leaves it running, and the next call reuses it. State is a JSON file
-(`pid`, the exact command line, `model_name`) next to a lock and a log, all keyed by port. A pid counts as ours only when
+(`pid`, the exact command line, `model_name`) next to a lock and a log, all named after the tool and keyed by port. A pid counts as ours only when
 `/proc/<pid>/cmdline` ends with the recorded command line, so a reused pid (or a zombie) is never signalled. The same command
 line decides reuse (equal to the one wanted) or replacement (different). Something else listening on the port is refused.
 
@@ -16,64 +16,75 @@ import socket
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Generic, TypeVar
 
-from .sdcpp_server import (
+from .server_process import (
     POLL_INTERVAL,
-    STARTUP_TIMEOUT,
     STOP_TIMEOUT,
-    SdCppError,
-    SdCppServer,
+    ServerError,
+    ServerProcess,
     build_argv,
-    listen_argv,
 )
 
-LOCK_WAIT = 900.0  # seconds a call waits for another genimg call before giving up
+LOCK_WAIT = 900.0  # seconds a call waits for another call of the tool before giving up
 LOG_TAIL_LINES = 15
+S = TypeVar("S", bound=ServerProcess)
 
 
 class KeepAliveError(Exception):
     """The kept server cannot be used (something else owns the port, the lock never came free, or it will not stop)."""
 
 
-def check_supported(proc: Path = Path("/proc")) -> None:
+def check_supported(tool: str, proc: Path = Path("/proc")) -> None:
     """Raise KeepAliveError unless this system has /proc (Linux), which the process check needs."""
     if not (proc / "self" / "cmdline").exists():
         raise KeepAliveError(
-            "genimg keeps its server between calls using /proc and fcntl, so it needs Linux"
+            f"{tool} keeps its server between calls using /proc and fcntl, so it needs Linux"
         )
 
 
 @dataclass(frozen=True)
-class Paths:
-    """The files of one kept server."""
+class KeptServer(Generic[S]):
+    """One kept server: the tool that keeps it, the kind of server, its port and its files."""
 
+    tool: str
+    server_class: type[S]
+    port: int
     lock: Path
     state: Path
     log: Path
 
 
-def paths_for(port: int, directory: Path | None = None) -> Paths:
-    """The lock, state and log files for `port`, in `directory` (default: the temp folder)."""
+def kept_server(
+    tool: str, server_class: type[S], port: int, directory: Path | None = None
+) -> KeptServer[S]:
+    """The kept server of `tool` on `port`; its files go in `directory` (default: the temp folder)."""
     base = directory if directory is not None else Path(tempfile.gettempdir())
     base.mkdir(parents=True, exist_ok=True)
-    stem = f"genimg-sd-{port}"
-    return Paths(base / f"{stem}.lock", base / f"{stem}.json", base / f"{stem}.log")
+    stem = f"{tool}-{port}"
+    return KeptServer(
+        tool,
+        server_class,
+        port,
+        base / f"{stem}.lock",
+        base / f"{stem}.json",
+        base / f"{stem}.log",
+    )
 
 
 @contextmanager
-def call_lock(path: Path, wait: float = LOCK_WAIT) -> Iterator[None]:
+def call_lock(kept: KeptServer[Any], wait: float = LOCK_WAIT) -> Iterator[None]:
     """
-    Hold an exclusive lock for a whole genimg call, so parallel calls queue.
+    Hold an exclusive lock for a whole call of the tool, so parallel calls queue.
 
     The lock goes away with the process, even if it is killed. The file is not
     inherited by the server this call may start.
     """
-    with open(path, "a") as lock:
+    with open(kept.lock, "a") as lock:
         start = time.monotonic()
         told = False
         while True:
@@ -82,11 +93,11 @@ def call_lock(path: Path, wait: float = LOCK_WAIT) -> Iterator[None]:
                 break
             except BlockingIOError:
                 if not told:
-                    print("waiting for another genimg call...", file=sys.stderr)
+                    print(f"waiting for another {kept.tool} call...", file=sys.stderr)
                     told = True
                 if time.monotonic() - start > wait:
                     raise KeepAliveError(
-                        f"another genimg call held {path} for over {wait:.0f}s"
+                        f"another {kept.tool} call held {kept.lock} for over {wait:.0f}s"
                     ) from None
                 time.sleep(POLL_INTERVAL)
         try:
@@ -147,16 +158,16 @@ def _log_tail(path: Path) -> str:
     return "\n".join(lines[-LOG_TAIL_LINES:])
 
 
-def running_model(state_path: Path) -> str | None:
+def running_model(kept: KeptServer[Any]) -> str | None:
     """The yaml model name the kept server was last used for, if one of ours is running."""
-    state = _read_state(state_path)
+    state = _read_state(kept.state)
     if state is not None and _ours(state):
         name = state.get("model_name")
         return name if isinstance(name, str) else None
     return None
 
 
-def stop_server(state_path: Path) -> None:
+def stop_server(kept: KeptServer[Any]) -> None:
     """
     Stop the kept server if the state file's pid is verifiably ours, then forget the state.
 
@@ -164,7 +175,8 @@ def stop_server(state_path: Path) -> None:
         KeepAliveError: If the process cannot be signalled or is still alive after
             SIGKILL; the state is kept so the next call knows about it
     """
-    state = _read_state(state_path)
+    name = kept.server_class.NAME
+    state = _read_state(kept.state)
     if state is not None and _ours(state):
         pid = state["pid"]
         for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -173,9 +185,7 @@ def stop_server(state_path: Path) -> None:
             except ProcessLookupError:
                 break
             except PermissionError as e:
-                raise KeepAliveError(
-                    f"cannot stop the sd-server (pid {pid}): {e}"
-                ) from e
+                raise KeepAliveError(f"cannot stop the {name} (pid {pid}): {e}") from e
             deadline = time.monotonic() + STOP_TIMEOUT
             while _ours(state) and time.monotonic() < deadline:
                 time.sleep(0.05)
@@ -183,7 +193,7 @@ def stop_server(state_path: Path) -> None:
                 break
         if _ours(state):
             raise KeepAliveError(
-                f"the sd-server (pid {pid}) did not stop; kill it by hand (kill -9 {pid})"
+                f"the {name} (pid {pid}) did not stop; kill it by hand (kill -9 {pid})"
             )
         # A process drops its command line before it closes its sockets: wait for the port too.
         port = state.get("port")
@@ -192,12 +202,12 @@ def stop_server(state_path: Path) -> None:
             isinstance(port, int) and _port_in_use(port) and time.monotonic() < deadline
         ):
             time.sleep(0.05)
-    state_path.unlink(missing_ok=True)
+    kept.state.unlink(missing_ok=True)
 
 
-def _wait_until_answering(server: SdCppServer, state: dict[str, Any]) -> bool:
+def _wait_until_answering(server: ServerProcess, state: dict[str, Any]) -> bool:
     """Wait for a server of ours that may still be starting; False if it died or hangs."""
-    deadline = time.monotonic() + STARTUP_TIMEOUT
+    deadline = time.monotonic() + server.STARTUP_TIMEOUT
     while not server.ready():
         if not _ours(state) or time.monotonic() > deadline:
             return False
@@ -206,53 +216,57 @@ def _wait_until_answering(server: SdCppServer, state: dict[str, Any]) -> bool:
 
 
 def ensure_server(
+    kept: KeptServer[S],
     binary: str,
     args: dict[str, Any],
     *,
-    port: int,
     model_name: str,
-    paths: Paths,
-) -> tuple[SdCppServer, bool]:
+    say: Callable[[str], None] = print,
+) -> tuple[S, bool]:
     """
-    Return a running server for `args` on `port`, and whether this call started it.
+    Return a running server for `args` on the kept server's port, and whether this call started it.
 
     Reuses ours when its command line is the one wanted, replaces ours when it
     differs, starts one when none is ours, and refuses when something else is
-    listening on the port. Call it with the lock held.
+    listening on the port. Call it with the lock held. `say` gets the progress messages
+    (reusing, stopping, started); a tool whose stdout is its result passes a function
+    that writes them to stderr.
 
     Raises:
         KeepAliveError: If something else is listening on the port, or the old
             server will not stop
-        SdCppError: `server_died` if the new server fails to start (with the log tail)
+        ServerError: `server_died` if the new server fails to start (with the log tail)
         OSError: If the binary cannot be run
     """
-    want = listen_argv(build_argv(binary, args), port)
-    state = _read_state(paths.state)
+    server_class, port, tool = kept.server_class, kept.port, kept.tool
+    name = server_class.NAME
+    want = server_class.listen_argv(build_argv(binary, args), port)
+    state = _read_state(kept.state)
     if state is not None and _ours(state):
         if state.get("argv") == want:
-            server = SdCppServer.attach(port, paths.log)
+            server = server_class.attach(port, kept.log)
             if _wait_until_answering(server, state):
                 if state.get("model_name") != model_name:
-                    _write_state(paths.state, {**state, "model_name": model_name})
-                print(f"reusing the sd-server already running (pid {state['pid']})")
+                    _write_state(kept.state, {**state, "model_name": model_name})
+                say(f"reusing the {name} already running (pid {state['pid']})")
                 return server, False
-        print(f"stopping the running sd-server (pid {state['pid']})")
-        stop_server(paths.state)
+        say(f"stopping the running {name} (pid {state['pid']})")
+        stop_server(kept)
     else:
         # The state is stale: the process is gone or the pid was reused.
-        paths.state.unlink(missing_ok=True)
+        kept.state.unlink(missing_ok=True)
     if _port_in_use(port):
         raise KeepAliveError(
-            f"something is already listening on port {port} that this genimg did not "
-            "start (a manual sd-server, or another session); stop it, or set GENIMG_PORT "
-            "to use another port"
+            f"something is already listening on port {port} that this {tool} did not "
+            f"start (a manual {name}, or another session); stop it, or set "
+            f"{tool.upper()}_PORT to use another port"
         )
 
-    server = SdCppServer(binary, args, paths.log, port=port, keep=True)
+    server = server_class(binary, args, kept.log, port=port, keep=True)
     server.spawn()
     # Written before waiting: a call killed while the server starts must not orphan it.
     _write_state(
-        paths.state,
+        kept.state,
         {
             "pid": server.pid,
             "port": port,
@@ -264,15 +278,15 @@ def ensure_server(
         server.wait_ready()
     except BaseException as e:
         server.stop()
-        paths.state.unlink(missing_ok=True)
-        if isinstance(e, SdCppError):
-            tail = _log_tail(paths.log)
-            raise SdCppError(
+        kept.state.unlink(missing_ok=True)
+        if isinstance(e, ServerError):
+            tail = _log_tail(kept.log)
+            raise ServerError(
                 e.kind, f"{e.message}\n{tail}" if tail else e.message, e.exit_code
             ) from e
         raise
-    print(
-        f"started an sd-server (pid {server.pid}, port {port}); it stays loaded for the "
-        f"next genimg call (stop it with: kill {server.pid})"
+    say(
+        f"started the {name} (pid {server.pid}, port {port}); it stays loaded for the "
+        f"next {tool} call (stop it with: kill {server.pid})"
     )
     return server, True

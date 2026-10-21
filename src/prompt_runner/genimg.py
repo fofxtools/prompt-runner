@@ -13,9 +13,10 @@ import yaml
 
 from . import keepalive
 from .config import load_config, load_image_models
-from .image_runner import Job, merged_server_args, prepare_request, run_jobs
-from .sdcpp_server import SdCppError, SdCppServer
-from .utils import merge_image_options
+from .image_runner import Job, prepare_request, run_jobs
+from .sdcpp_server import SdCppServer
+from .server_process import ServerError
+from .utils import merge_options, merged_server_args
 
 DESCRIPTION = """\
 Generate an image, or edit one with --ref (the prompt then describes the edit), using a model from
@@ -27,7 +28,7 @@ Linux only. The sd-server stays loaded between calls, so the next call skips the
 it and prints its pid; a call that needs a different model (different server flags) replaces it; calls queue behind
 one another. `genimg --start` loads it ahead of time with a throwaway 64x64 image (e.g. before something else takes the GPU).
 Stop it with `genimg --stop` (or `kill PID`); it also ends with an OpenCode session. If something else is listening on the
-port (8190, or $GENIMG_PORT), genimg refuses to touch it. Files: /tmp/genimg-sd-<port>.lock, .json (what runs) and
+port (8190, or $GENIMG_PORT), genimg refuses to touch it. Files: /tmp/genimg-<port>.lock, .json (what runs) and
 .log (the server's output).
 
 Model: --model, else the model the running server was last used for, else `default_image_model` in
@@ -37,6 +38,7 @@ the LoRAs the model entry already lists (file names in the server's --lora-model
 
 The PNG is written to OUT; an existing file is never overwritten. runs.jsonl goes to <output folder>/.genimg/.
 """
+TOOL = "genimg"  # names the kept server's files and $GENIMG_PORT
 DEFAULT_PORT = 8190
 
 
@@ -145,7 +147,7 @@ def _job_options(
         options["ref_images"] = [str(Path(ref).resolve()) for ref in args.ref]
     if args.lora:
         # Lists are replaced when options are merged, so start from the model's own LoRAs.
-        base = merge_image_options(
+        base = merge_options(
             config.get("image_generation_defaults"), model.get("generation_options")
         )
         options["lora"] = [*base.get("lora", []), *args.lora]
@@ -162,11 +164,11 @@ def _port() -> int:
 
 def _stop(port: int, state_dir: Path | None) -> str:
     """Stop the kept server once any running call is done; return what happened."""
-    keepalive.check_supported()
-    paths = keepalive.paths_for(port, state_dir)
-    with keepalive.call_lock(paths.lock):
-        was_running = keepalive.running_model(paths.state) is not None
-        keepalive.stop_server(paths.state)
+    keepalive.check_supported(TOOL)
+    kept = keepalive.kept_server(TOOL, SdCppServer, port, state_dir)
+    with keepalive.call_lock(kept):
+        was_running = keepalive.running_model(kept) is not None
+        keepalive.stop_server(kept)
     return (
         "stopped the sd-server" if was_running else "no sd-server of genimg is running"
     )
@@ -192,13 +194,12 @@ def _start(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) ->
     now: only then does the model hold its GPU memory.
     """
     config, models = _load(repo_root)
-    keepalive.check_supported()
-    port = _port()
-    paths = keepalive.paths_for(port, state_dir)
-    with keepalive.call_lock(paths.lock):
-        running = None if args.model else keepalive.running_model(paths.state)
+    keepalive.check_supported(TOOL)
+    kept = keepalive.kept_server(TOOL, SdCppServer, _port(), state_dir)
+    with keepalive.call_lock(kept):
+        running = None if args.model else keepalive.running_model(kept)
         model = _pick_model(models, args.model or running, config, running is not None)
-        warm_up = merge_image_options(
+        warm_up = merge_options(
             config.get("image_generation_defaults"),
             model.get("generation_options"),
             {"prompt": "warm-up", "width": 64, "height": 64},
@@ -206,22 +207,21 @@ def _start(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) ->
         started = False
         try:
             server, started = keepalive.ensure_server(
+                kept,
                 config["sd_server"],
                 merged_server_args(config.get("image_server_args"), model),
-                port=port,
                 model_name=model["name"],
-                paths=paths,
             )
             server.generate(prepare_request(warm_up)[0])
-        except (SdCppError, OSError) as e:
+        except (ServerError, OSError) as e:
             # As for an image call: a dead server, or a new one that cannot load its model, is not kept.
             problem = ""
             if started or getattr(e, "kind", "") == "server_died":
                 try:
-                    keepalive.stop_server(paths.state)
+                    keepalive.stop_server(kept)
                 except keepalive.KeepAliveError as stop_error:
                     problem = f"; {stop_error}"
-            raise GenimgError(f"{e} (server log: {paths.log}){problem}") from e
+            raise GenimgError(f"{e} (server log: {kept.log}){problem}") from e
     return f"sd-server ready with {model['name']} ({'started' if started else 'already running'})"
 
 
@@ -236,15 +236,14 @@ def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None)
         if not Path(ref).is_file():
             raise GenimgError(f"reference image not found: {ref}")
 
-    keepalive.check_supported()
-    port = _port()
-    paths = keepalive.paths_for(port, state_dir)
+    keepalive.check_supported(TOOL)
+    kept = keepalive.kept_server(TOOL, SdCppServer, _port(), state_dir)
     out_dir = out.resolve().parent / ".genimg"
-    with keepalive.call_lock(paths.lock):
+    with keepalive.call_lock(kept):
         # Checked again: another call may have written this file while we waited for the lock.
         if out.exists():
             raise GenimgError(f"{out} already exists; choose another name")
-        running = None if args.model else keepalive.running_model(paths.state)
+        running = None if args.model else keepalive.running_model(kept)
         model = _pick_model(models, args.model or running, config, running is not None)
         job = Job(model, _job_options(args, model, config), out)
         started = False
@@ -254,11 +253,7 @@ def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None)
         ) -> SdCppServer:
             nonlocal started
             server, started = keepalive.ensure_server(
-                binary,
-                server_args,
-                port=port,
-                model_name=model["name"],
-                paths=paths,
+                kept, binary, server_args, model_name=model["name"]
             )
             job.tags["server"] = "started" if started else "warm"
             return server
@@ -283,14 +278,14 @@ def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None)
             # A dead server, or a new one whose first job failed (usually a failed model
             # load), must not be reused by the next call.
             try:
-                keepalive.stop_server(paths.state)
+                keepalive.stop_server(kept)
             except keepalive.KeepAliveError as e:
                 stop_problem = f"; {e}"
 
     if row["status"] != "ok":
         detail = row["error"] or row["status"]
         if row["kind"] in ("job_failed", "server_died"):
-            detail += f" (server log: {paths.log})"
+            detail += f" (server log: {kept.log})"
         raise GenimgError(detail + stop_problem)
     request = row["request"]
     parts = [f"seed {row['seed']}", f"model {model['name']}"]

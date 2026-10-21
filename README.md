@@ -10,12 +10,25 @@ Toolkit for running prompts across multiple LLM and image models and comparing t
 pip install -e .
 ```
 
-Image generation also needs a [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) `sd-server` build
-(see `docs/cuda-setup.md`).
+LLM evaluation needs [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama` executable, and image generation a
+[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) `sd-server` build (see `docs/cuda-setup.md`).
 
 ## Usage
 
-### LLM Evaluation
+### LLM evaluation
+
+Each distinct model setup runs in its own `llama serve` ([llama.cpp](https://github.com/ggml-org/llama.cpp)), started and stopped for you. Set `llama_server` in
+`config/config.yaml` to the `llama` executable (a bare name is looked up on `PATH`):
+
+```yaml
+llama_server: llama
+```
+
+Model entries are in `config/llm_models.yaml` (the comments at its top describe the options): the `llama serve` flags of a model are its `server_args` (`-m`, `--mmproj`, ...), added to
+`llm_server_args` in `config.yaml`; request fields (`temperature`, `max_tokens`, `seed`, ...) are its `generation_options`, added to `llm_generation_defaults`. A prompt in `config/llm_prompts.yaml` has
+a `prompt` (sent as one user message) or `messages`, and optional `options` that win over the model's. For a vision model (one with an `--mmproj`), a `prompt` can have `images:` (a list of image file paths)
+and a user message in `messages` can have its own `images:`: they are sent before the text, and the log records the paths, not the images. PNG, JPEG, GIF, BMP and WebP work, TIFF does not;
+an image costs tokens by its size (about 1000 for a 1024-pixel square, about 4000 for 4096), which `--image-max-tokens` in the model's `server_args` can cap. Ollama's option names (`num_predict`, `num_ctx`, ...) are refused, because llama-server would ignore them.
 
 ```python
 from prompt_runner.llm_runner import run_llm_eval
@@ -26,7 +39,35 @@ prompts = load_llm_prompts("config/llm_prompts.yaml")
 models = load_llm_models("config/llm_models.yaml")
 
 run_llm_eval(config, prompts, models)
+# run_llm_eval(config, prompts, models, options={"temperature": 0.7})  # one value for every model
 ```
+
+Every prompt runs on every model, one server per model. The results go to `<results_dir>/<run folder>/llm/`:
+`runs.jsonl` (one row per prompt and model: the request, the answer and the model's thinking in separate fields, the finish reason, token counts and speeds, the seed, the sampling in effect, the server flags and any error),
+`<prompt id>/<model>.md` (the answer) and `server_logs/`. A random seed is chosen for every chat that has none, and recorded. A reply that is cut at `max_tokens` has the finish reason `length`.
+
+From Python, give `run_llm_jobs` an explicit list of `LlmJob`s, so you decide the matrix and the file names (the same idea as `run_jobs` for images).
+
+To share the GPU with a loaded sd-server, start the sd-server first (`genimg --start`) and raise `-fitt` for the LLM (about 6000, the MiB `--fit` leaves free; `llm_server_args` in `config.yaml`),
+so llama.cpp leaves room for the image server's peak.
+
+### One model at a time: `scripts/llm`
+
+A command like `ollama list` and `ollama run`, over the models in `config/llm_models.yaml`, with the same server flags and sampling as the runner:
+
+```bash
+scripts/llm list                                # names, size on disk, and which model is loaded
+scripts/llm run qwen3.5-4b "Say hello."         # one reply
+echo "Why is the sky blue?" | scripts/llm run qwen3.5-4b > answer.md
+scripts/llm run mistral-nemo-12b                # a chat (/bye or Ctrl-D ends it; Ctrl-C stops the reply being written)
+scripts/llm run joycaption-beta-one --image fox.png "Describe this image."   # images go with the first message
+scripts/llm stop                                # unload the model
+```
+
+The answer goes to stdout and the model's thinking (dimmed) to stderr, so a redirected answer is only the answer. `--system TEXT` sets a system prompt. The model's `llama serve` stays loaded between calls, so the next call skips the load;
+a call for another model replaces it, and calls queue behind one another. It listens on port 8191 (or `$LLM_PORT`) and llm refuses to touch anything else that is listening there; `genimg`'s sd-server is separate (port 8190), so
+start it first when they share the GPU (see above). A chat keeps its history in the command, so it carries on even if another call unloaded the model meanwhile. Without a prompt, `llm run` reads the prompt from a pipe; with a prompt it
+never reads stdin (an open pipe that never ends would hang it). Linux only (it uses `/proc` and `fcntl`); `llama` must be on the `PATH`.
 
 ### Image generation
 

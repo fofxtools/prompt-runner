@@ -1,22 +1,219 @@
-- name: deepseek-coder:6.7b
-- name: deepseek-r1:8b
-- name: gemma3:4b
-- name: llama3.1:8b
-- name: llava:7b
-- name: ministral-3:8b
-- name: mistral-nemo:12b
-- name: mistral:7b
-- name: phi3:3.8b
-- name: qwen2.5-coder:7b
-- name: qwen2.5:7b
-- name: qwen2.5vl:7b
-- name: qwen3-vl:8b
-- name: qwen3:8b
-- name: CognitiveComputations/dolphin-llama3.1:8b
-- name: dolphin3:8b
-- name: huihui_ai/deepseek-r1-abliterated:8b
-- name: huihui_ai/dolphin3-abliterated:8b
-- name: huihui_ai/gemma3-abliterated:4b
-- name: huihui_ai/qwen2.5-abliterate:7b
-- name: huihui_ai/qwen3-abliterated:8b
-- name: huihui_ai/qwen3-vl-abliterated:8b
+# LLM models configuration
+# One llama.cpp server (`llama serve`) is started per model.
+#
+# server_args: literal `llama serve` flags for this model, merged over llm_server_args in config.yaml.
+#   true gives a bare flag, false/null omits it, anything else gives `flag value`.
+#   - Paths: -m (the model), --mmproj (the vision projector; images need it)
+#   - A model's value wins over llm_server_args; `false` drops a global flag (e.g. -fitt: false)
+#
+# generation_options: request fields (OpenAI names), merged between llm_generation_defaults in config.yaml
+#   and each prompt's options.
+#   - Here: the recommended sampling. Source: the card of the repo the file came from, when it gives settings for this
+#     build; else the card of the model's original authors; where the repo's card only excerpts the authors' (Qwen3.5),
+#     the authors' full set. Each entry says which. A model with no recommendation anywhere has no generation_options:
+#     llama.cpp's own defaults apply (or the ones its GGUF carries) and the results record what was used (`sampling`).
+#   - Other fields: max_tokens (-1: no limit), seed, chat_template_kwargs, reasoning_effort, ...
+#   - Card names become llama.cpp's: repetition_penalty is repeat_penalty.
+#   - The Qwen cards give one set for thinking mode (the default) and another for non-thinking; these entries use the
+#     thinking-mode one for general tasks. Thinking is switched off with chat_template_kwargs: {enable_thinking: false}
+#     (or reasoning_effort: none) and capped with the server flag `--reasoning-budget: 1500`. For the Qwens the
+#     non-thinking set is temperature 0.7, top_p 0.8, top_k 20, min_p 0, presence_penalty 1.5.
+#   - Models that think put it in `reasoning` in the results. Near-greedy sampling (temperature 0.2) made Qwen3.5-4B
+#     loop in its thinking until max_tokens ran out ("Write a modern version of Little Red Riding Hood" repeated one line
+#     510 times); more tokens do not help, the card's sampling does.
+#   - Ollama's num_predict, num_ctx, ... are refused: llama-server would ignore them without a word.
+#
+# Order: by model family, oldest first; inside a family by size, then variant.
+# The MTP draft files (mtp-gemma-4-*, *-FastMTP-32K) for speculative decoding are not used yet.
+# Each card ends with the source URL(s).
+
+# Mistral Nemo Instruct 2407, 12B, text only. Q4_K_M, 7.5 GB.
+# Sampling: temperature 0.3 (Mistral's card: "Mistral Nemo requires smaller temperatures"; the repo's card gives none).
+# https://huggingface.co/bartowski/Mistral-Nemo-Instruct-2407-GGUF
+- name: mistral-nemo-12b
+  server_args:
+    -m: /home/shared/ai/llm/Mistral-Nemo-Instruct-2407-Q4_K_M.gguf
+  generation_options:
+    temperature: 0.3
+
+# JoyCaption Beta One: image captioning (Llama 3.1 8B with a SigLIP2 vision tower). Q4_K_M, 4.9 GB; needs its mmproj.
+# The model repo has no mmproj; it comes from the second repo (F16 only).
+# Sampling: temperature 0.6, top_p 0.9 (the author's card, in its example code; the repos' cards give none). The card also uses the system prompt
+# "You are a helpful image captioner." and the user prompt "Write a long descriptive caption for this image in a formal tone."
+# https://huggingface.co/mradermacher/llama-joycaption-beta-one-hf-llava-GGUF
+# https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf
+- name: joycaption-beta-one
+  server_args:
+    -m: /home/shared/ai/vlm/llama-joycaption-beta-one-hf-llava.Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/llama-joycaption-beta-one-llava-mmproj-model-f16.gguf
+  generation_options:
+    temperature: 0.6
+    top_p: 0.9
+
+# Dolphin Mistral 24B Venice Edition (cognitivecomputations), uncensored. IQ4_XS, 12.8 GB.
+# Sampling: temperature 0.15 (the author's card, which also asks for a system prompt; the repo's card gives none).
+# https://huggingface.co/bartowski/cognitivecomputations_Dolphin-Mistral-24B-Venice-Edition-GGUF
+- name: dolphin-venice-24b
+  server_args:
+    -m: /home/shared/ai/llm/cognitivecomputations_Dolphin-Mistral-24B-Venice-Edition-IQ4_XS.gguf
+  generation_options:
+    temperature: 0.15
+
+# Cydonia 24B v4zg (TheDrummer). Q4_K_M, 14.3 GB: with the context on top it does not fit 16 GB, so --fit
+# moves some layers to the CPU and it runs slower.
+# Sampling: none recommended (TheDrummer's card is the repo's), so llama.cpp's defaults apply.
+# https://huggingface.co/TheDrummer/Cydonia-24B-v4.3-GGUF
+- name: cydonia-24b-v4zg
+  server_args:
+    -m: /home/shared/ai/llm/Cydonia-24B-v4zg-Q4_K_M.gguf
+
+# Qwen2.5-VL 7B fine-tuned for NSFW image captions, V4. Q4_K_M, 4.7 GB; needs its mmproj, and only the repo's own fits
+# (the official Qwen2.5-VL one does not: this model is 4096 wide, the stock one 3584). It uses the repo's Q8_0 mmproj: the
+# repo's F16 one made every image answer "??????..." on the GPU (and works only with --no-mmproj-offload, vision on the CPU,
+# 12 s for the first image against 1 s). The other models' F16 projectors are fine.
+# Sampling: none found (the repo's card gives none, the author's needs a login, the base Qwen2.5-VL card gives none), so
+# llama.cpp's defaults apply.
+# https://huggingface.co/mradermacher/Qwen2.5-VL-7B-NSFW-Caption-V4-GGUF
+- name: qwen2.5-vl-7b-nsfw-caption-v4
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen2.5-VL-7B-NSFW-Caption-V4.Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/Qwen2.5-VL-7B-NSFW-Caption-V4.mmproj-Q8_0.gguf
+
+# Qwen3-VL 8B fine-tuned for NSFW image captions, V4.5. Q4_K_M, 5.0 GB; needs its mmproj (F16).
+# Sampling: the repo's card gives none, the fine-tune's says it is used like Qwen3-VL-8B-Instruct, so Qwen's card for that
+# model, vision tasks: temperature 0.7, top_p 0.8, top_k 20, presence_penalty 1.5, repetition_penalty 1.0.
+# https://huggingface.co/mradermacher/Qwen3-VL-8B-NSFW-Caption-V4.5-GGUF
+- name: qwen3-vl-8b-nsfw-caption-v4.5
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen3-VL-8B-NSFW-Caption-V4.5.Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/Qwen3-VL-8B-NSFW-Caption-V4.5.mmproj-f16.gguf
+  generation_options:
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+
+# Qwen3.5 4B, HauhauCS "Aggressive" uncensored build, with vision. Q6_K, 3.5 GB.
+# Sampling: Qwen's card, thinking mode for general tasks. The HauhauCS card lists 0.6 / top_p 0.95 / top_k 20 / min_p 0
+# for thinking (Qwen's coding set without its presence_penalty); on the 4B one of three seeds of that looped in its
+# thinking and never answered, none of five did with Qwen's set.
+# https://huggingface.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive
+- name: qwen3.5-4b
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf
+  generation_options:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+
+# Qwen3.5 9B, HauhauCS "Aggressive" uncensored build, with vision. Q4_K_M, 5.6 GB.
+# Sampling: Qwen's card, thinking mode for general tasks. The HauhauCS card lists 0.6 / top_p 0.95 / top_k 20 / min_p 0
+# for thinking (Qwen's coding set without its presence_penalty); on the 4B one of three seeds of that looped in its
+# thinking and never answered, none of five did with Qwen's set.
+# https://huggingface.co/HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive
+- name: qwen3.5-9b
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf
+  generation_options:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+
+# Gemma 4 E4B, HauhauCS "Aggressive" uncensored build, with vision. Q6_K_P, 6.3 GB.
+# Sampling: Google's card, all use cases (the HauhauCS card gives the same, and the GGUF has it too).
+# https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
+- name: gemma4-e4b
+  server_args:
+    -m: /home/shared/ai/vlm/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q6_K_P.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16.gguf
+  generation_options:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 64
+
+# Gemma 4 12B QAT, HauhauCS "Balanced" uncensored build, with vision. Q4_K_M, 7.4 GB.
+# Sampling: the HauhauCS card, "dialed in specifically for this HauhauCS build": temperature 0.6, top_k 64, top_p 0.9,
+# min_p 0.05, repeat_penalty 1.1. (Google's card for the original: 1.0 / top_p 0.95 / top_k 64. Both ran without trouble
+# on two prompts and two seeds.)
+# https://huggingface.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced
+- name: gemma4-12b-qat
+  server_args:
+    -m: /home/shared/ai/vlm/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-BF16.gguf
+  generation_options:
+    temperature: 0.6
+    top_k: 64
+    top_p: 0.9
+    min_p: 0.05
+    repeat_penalty: 1.1
+
+# Gemma 4 26B-A4B QAT (mixture of experts, about 4B active), HauhauCS "Balanced" uncensored build, with vision.
+# Q4_K_M, 16.8 GB: does not fit 16 GB with the context, so --fit moves some of it to the CPU.
+# Sampling: the HauhauCS card's own, as for the 12B (tried on the 12B only).
+# https://huggingface.co/HauhauCS/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-MTP
+- name: gemma4-26b-a4b-qat
+  server_args:
+    -m: /home/shared/ai/vlm/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-BF16.gguf
+  generation_options:
+    temperature: 0.6
+    top_k: 64
+    top_p: 0.9
+    min_p: 0.05
+    repeat_penalty: 1.1
+
+# Qwen3.6 35B-A3B (mixture of experts, about 3B active), HauhauCS "Aggressive" uncensored build, with vision.
+# Q4_K_M, 21 GB: most of it sits in RAM on a 16 GB card.
+# Sampling: Qwen's card, thinking mode for general tasks (the HauhauCS card gives the same). The card also says to keep
+# at least 128K of context so thinking works well; llm_server_args sets -c 32768.
+# https://huggingface.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive
+- name: qwen3.6-35b-a3b
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-f16.gguf
+  generation_options:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+
+# Qwen3.8 27B (dense), OrcaRouter uncensored build, with vision. Q4_K_M, 16.8 GB: does not fit 16 GB with the context.
+# Sampling: the OrcaRouter card gives none; Qwen's Qwen3.8-27B card, thinking mode.
+# https://huggingface.co/chimingw/Qwen3.8-27B-Uncensored-OrcaRouter-GGUF
+- name: qwen3.8-27b-orcarouter
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen3.8-27B-Uncensored-OrcaRouter-Q4_K_M.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Qwen3.8-27B-Uncensored-OrcaRouter-F16.gguf
+  generation_options:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 0.0
+    repeat_penalty: 1.0
+
+# Qwen3.8 27B (dense), HauhauCS "Aggressive" uncensored build, with vision. Q4_K_P, 17.9 GB: does not fit 16 GB with the context.
+# Sampling: Qwen's Qwen3.8-27B card, thinking mode (the HauhauCS card gives the same).
+# https://huggingface.co/HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF
+- name: qwen3.8-27b-aggressive
+  server_args:
+    -m: /home/shared/ai/vlm/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf
+    --mmproj: /home/shared/ai/vlm/mmproj-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-BF16.gguf
+  generation_options:
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 0.0
+    repeat_penalty: 1.0

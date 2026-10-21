@@ -6,13 +6,8 @@ import os
 import pytest
 
 from prompt_runner import sdcpp_server
-from prompt_runner.sdcpp_server import (
-    SdCppError,
-    SdCppServer,
-    build_argv,
-    free_port,
-    listen_argv,
-)
+from prompt_runner.sdcpp_server import SdCppServer
+from prompt_runner.server_process import ServerError, build_argv, free_port
 
 
 def alive(pid: int) -> bool:
@@ -66,7 +61,7 @@ class TestSdCppServer:
     ):
         with SdCppServer(fake_binary, {"--mode": "fail"}, tmp_path / "m.log") as server:
             for _ in range(2):
-                with pytest.raises(SdCppError) as info:
+                with pytest.raises(ServerError) as info:
                     server.generate({"prompt": "x"})
                 assert info.value.kind == "job_failed"
                 assert info.value.message == "out of memory"
@@ -75,7 +70,7 @@ class TestSdCppServer:
         with SdCppServer(
             fake_binary, {"--mode": "reject"}, tmp_path / "m.log"
         ) as server:
-            with pytest.raises(SdCppError, match="HTTP 400") as info:
+            with pytest.raises(ServerError, match="HTTP 400") as info:
                 server.generate({"prompt": "x"})
             assert info.value.kind == "job_failed"
 
@@ -84,7 +79,7 @@ class TestSdCppServer:
     ):
         with (
             SdCppServer(fake_binary, {"--mode": "die"}, tmp_path / "m.log") as server,
-            pytest.raises(SdCppError) as info,
+            pytest.raises(ServerError) as info,
         ):
             server.generate({"prompt": "x"})
         assert info.value.kind == "server_died"
@@ -92,7 +87,7 @@ class TestSdCppServer:
 
     def test_process_exiting_at_startup_raises_server_died(self, fake_binary, tmp_path):
         with (
-            pytest.raises(SdCppError) as info,
+            pytest.raises(ServerError) as info,
             SdCppServer(fake_binary, {"--mode": "exit"}, tmp_path / "m.log"),
         ):
             pass
@@ -109,7 +104,7 @@ class TestSdCppServer:
 
 class TestListenArgv:
     def test_appends_the_listen_flags(self):
-        assert listen_argv(["sd", "--vae", "v"], 8190) == [
+        assert SdCppServer.listen_argv(["sd", "--vae", "v"], 8190) == [
             "sd",
             "--vae",
             "v",
@@ -164,7 +159,7 @@ class TestKeptAndAttachedServers:
         )
         started.start()
         try:
-            with pytest.raises(SdCppError) as info:
+            with pytest.raises(ServerError) as info:
                 SdCppServer.attach(port, tmp_path / "m.log").generate({"prompt": "x"})
             assert info.value.kind == "server_died"
             assert started.pid is not None and alive(started.pid)

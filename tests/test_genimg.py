@@ -18,7 +18,8 @@ from prompt_runner import keepalive
 from prompt_runner.genimg import main
 from prompt_runner.image_runner import Job, run_jobs
 from prompt_runner.keepalive import KeepAliveError
-from prompt_runner.sdcpp_server import SdCppError
+from prompt_runner.sdcpp_server import SdCppServer
+from prompt_runner.server_process import ServerError
 
 REPO = Path(__file__).resolve().parent.parent
 BASE_LORA = {"path": "base.safetensors", "multiplier": 0.5}
@@ -46,7 +47,7 @@ class FakeServer:
     def generate(self, request: dict[str, Any]) -> list[bytes]:
         self.requests.append(request)
         outcome = FakeServer.outcomes.pop(0) if FakeServer.outcomes else [b"png"]
-        if isinstance(outcome, SdCppError):
+        if isinstance(outcome, ServerError):
             raise outcome
         return list(outcome)
 
@@ -65,9 +66,9 @@ class Kept:
 def kept():
     state = Kept()
 
-    def ensure_server(binary, args, *, port, model_name, paths):
-        state.ensured.append({"port": port, "model": model_name, "paths": paths})
-        return FakeServer(binary, args, paths.log), state.started
+    def ensure_server(kept, binary, args, *, model_name):
+        state.ensured.append({"port": kept.port, "model": model_name, "paths": kept})
+        return FakeServer(binary, args, kept.log), state.started
 
     FakeServer.instances = []
     FakeServer.outcomes = []
@@ -75,10 +76,10 @@ def kept():
         patch("prompt_runner.image_runner.SdCppServer", FakeServer),
         patch("prompt_runner.image_runner.engine_version", return_value="sd vTEST"),
         patch("prompt_runner.keepalive.ensure_server", ensure_server),
-        patch("prompt_runner.keepalive.running_model", lambda path: state.running),
+        patch("prompt_runner.keepalive.running_model", lambda kept: state.running),
         patch(
             "prompt_runner.keepalive.stop_server",
-            lambda path: setattr(state, "stopped", state.stopped + 1),
+            lambda kept: setattr(state, "stopped", state.stopped + 1),
         ),
     ):
         yield state
@@ -207,7 +208,7 @@ class TestKeptServer:
         call = kept.ensured[0]
         assert call["port"] == 8190
         assert call["model"] == "model-a"
-        assert call["paths"].state == tmp_path / "state" / "genimg-sd-8190.json"
+        assert call["paths"].state == tmp_path / "state" / "genimg-8190.json"
 
     def test_genimg_port_overrides_the_port(self, repo, tmp_path, kept, monkeypatch):
         monkeypatch.setenv("GENIMG_PORT", "9123")
@@ -264,10 +265,10 @@ class TestKeptServer:
     @pytest.mark.parametrize(
         ("started", "outcome", "stops"),
         [
-            (False, SdCppError("server_died", "gone"), 1),
-            (True, SdCppError("server_died", "gone"), 1),
-            (True, SdCppError("job_failed", "out of memory"), 1),
-            (False, SdCppError("job_failed", "out of memory"), 0),
+            (False, ServerError("server_died", "gone"), 1),
+            (True, ServerError("server_died", "gone"), 1),
+            (True, ServerError("job_failed", "out of memory"), 1),
+            (False, ServerError("job_failed", "out of memory"), 0),
         ],
     )
     def test_failure_policy(self, repo, tmp_path, kept, started, outcome, stops):
@@ -283,7 +284,7 @@ class TestReviewFixes:
         self, repo, tmp_path, capsys
     ):
         out = tmp_path / "images" / "out.png"
-        paths = keepalive.paths_for(8190, tmp_path / "state")
+        kept = keepalive.kept_server("genimg", SdCppServer, 8190, tmp_path / "state")
         result: dict[str, int] = {}
 
         def second_call() -> None:
@@ -291,7 +292,7 @@ class TestReviewFixes:
                 ["x", "-o", str(out)], repo_root=repo, state_dir=tmp_path / "state"
             )
 
-        with keepalive.call_lock(paths.lock):  # the first call holds the lock
+        with keepalive.call_lock(kept):  # the first call holds the lock
             thread = threading.Thread(target=second_call)
             thread.start()
             time.sleep(0.3)  # the second call has passed its first exists() check
@@ -326,10 +327,10 @@ class TestReviewFixes:
     def test_a_server_that_will_not_stop_is_reported_with_the_job_error(
         self, repo, tmp_path, capsys, kept
     ):
-        def stuck(path):
+        def stuck(kept):
             raise KeepAliveError("the sd-server (pid 7) did not stop; kill it by hand")
 
-        FakeServer.outcomes = [SdCppError("server_died", "gone")]
+        FakeServer.outcomes = [ServerError("server_died", "gone")]
         with patch("prompt_runner.keepalive.stop_server", stuck):
             code, _ = run(repo, tmp_path)
         err = capsys.readouterr().err
@@ -383,7 +384,7 @@ class TestStart:
         self, repo, tmp_path, capsys, monkeypatch
     ):
         def broken(*a, **k):
-            raise SdCppError("server_died", "sd-server exited with code 3")
+            raise ServerError("server_died", "sd-server exited with code 3")
 
         monkeypatch.setattr("prompt_runner.keepalive.ensure_server", broken)
         code = main(["--start"], repo_root=repo, state_dir=tmp_path)
@@ -394,7 +395,7 @@ class TestStart:
     def test_a_failed_warm_up_on_a_new_server_stops_it(
         self, repo, tmp_path, capsys, kept
     ):
-        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+        FakeServer.outcomes = [ServerError("job_failed", "out of memory")]
         code = main(["--start"], repo_root=repo, state_dir=tmp_path)
         assert code == 1
         assert "out of memory" in capsys.readouterr().err
@@ -404,14 +405,14 @@ class TestStart:
         self, repo, tmp_path, capsys, kept
     ):
         kept.started = False
-        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+        FakeServer.outcomes = [ServerError("job_failed", "out of memory")]
         code = main(["--start"], repo_root=repo, state_dir=tmp_path)
         assert code == 1
         assert kept.stopped == 0
 
     def test_a_dead_server_is_stopped(self, repo, tmp_path, kept):
         kept.started = False
-        FakeServer.outcomes = [SdCppError("server_died", "gone")]
+        FakeServer.outcomes = [ServerError("server_died", "gone")]
         main(["--start"], repo_root=repo, state_dir=tmp_path)
         assert kept.stopped == 1
 
@@ -437,7 +438,7 @@ class TestStop:
         assert "no sd-server of genimg is running" in capsys.readouterr().out
 
     def test_a_server_that_will_not_stop_fails(self, repo, tmp_path, capsys):
-        def stuck(path):
+        def stuck(kept):
             raise KeepAliveError("the sd-server (pid 7) did not stop")
 
         with patch("prompt_runner.keepalive.stop_server", stuck):
@@ -535,12 +536,12 @@ class TestErrors:
     def test_failed_generation_reports_the_error_and_server_log(
         self, repo, tmp_path, capsys
     ):
-        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+        FakeServer.outcomes = [ServerError("job_failed", "out of memory")]
         code, out = run(repo, tmp_path)
         err = capsys.readouterr().err
         assert code == 1
         assert "genimg failed: out of memory" in err
-        assert f"server log: {tmp_path / 'state' / 'genimg-sd-8190.log'}" in err
+        assert f"server log: {tmp_path / 'state' / 'genimg-8190.log'}" in err
         assert not out.exists()
 
     def test_missing_binary_is_reported_not_a_traceback(self, repo, tmp_path, capsys):

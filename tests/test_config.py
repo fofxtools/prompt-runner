@@ -1,5 +1,7 @@
 """Unit tests for src/config.py"""
 
+from pathlib import Path
+
 import pytest
 
 from prompt_runner.config import (
@@ -154,6 +156,50 @@ class TestLoadPrompts:
             load_llm_prompts(str(prompts_file))
 
 
+class TestPromptImages:
+    def write(self, tmp_path: Path, text: str) -> str:
+        path = tmp_path / "prompts.yaml"
+        path.write_text(text)
+        return str(path)
+
+    def test_a_prompt_and_a_message_can_have_images(self, tmp_path):
+        prompts = load_llm_prompts(
+            self.write(
+                tmp_path,
+                """
+- id: one
+  prompt: Describe this.
+  images: [/a.png, /b.jpg]
+- id: two
+  messages:
+    - {role: system, content: Be brief.}
+    - {role: user, content: Compare, images: [/a.png]}
+""",
+            )
+        )
+        assert prompts[0]["images"] == ["/a.png", "/b.jpg"]
+        assert prompts[1]["messages"][1]["images"] == ["/a.png"]
+
+    @pytest.mark.parametrize("images", ["/a.png", "[1, 2]", "['']", "[[]]"])
+    def test_images_must_be_a_list_of_paths(self, tmp_path, images):
+        with pytest.raises(TypeError, match="images"):
+            load_llm_prompts(
+                self.write(tmp_path, f"- id: p\n  prompt: x\n  images: {images}\n")
+            )
+
+    def test_images_on_a_prompt_with_messages_are_refused(self, tmp_path):
+        text = (
+            "- id: p\n  images: [/a.png]\n  messages:\n    - {role: user, content: x}\n"
+        )
+        with pytest.raises(ValueError, match="in the message"):
+            load_llm_prompts(self.write(tmp_path, text))
+
+    def test_only_a_user_message_can_have_images(self, tmp_path):
+        text = "- id: p\n  messages:\n    - {role: assistant, content: x, images: [/a.png]}\n"
+        with pytest.raises(ValueError, match="only a user message"):
+            load_llm_prompts(self.write(tmp_path, text))
+
+
 class TestLoadModels:
     """Tests for load_llm_models function."""
 
@@ -162,14 +208,20 @@ class TestLoadModels:
         models_file = tmp_path / "models.yaml"
         models_file.write_text("""
 - name: model1
-  options:
+  server_args:
+    -m: /models/one.gguf
+    --mmproj: /models/one-mmproj.gguf
+  generation_options:
     temperature: 0.7
 - name: model2
+  server_args:
+    -m: /models/two.gguf
 """)
         models = load_llm_models(str(models_file))
         assert len(models) == 2
         assert models[0]["name"] == "model1"
-        assert models[0]["options"]["temperature"] == 0.7
+        assert models[0]["server_args"]["--mmproj"] == "/models/one-mmproj.gguf"
+        assert models[0]["generation_options"]["temperature"] == 0.7
         assert models[1]["name"] == "model2"
 
     def test_missing_file(self):
@@ -180,9 +232,52 @@ class TestLoadModels:
     def test_missing_name_field(self, tmp_path):
         """Test that missing name field raises ValueError."""
         models_file = tmp_path / "models.yaml"
-        models_file.write_text("- options:\n    temperature: 0.7\n")
-        with pytest.raises(ValueError):
+        models_file.write_text("- server_args:\n    -m: /m.gguf\n")
+        with pytest.raises(ValueError, match="name"):
             load_llm_models(str(models_file))
+
+    def test_an_ollama_style_entry_without_server_args_is_refused(self, tmp_path):
+        models_file = tmp_path / "models.yaml"
+        models_file.write_text("- name: qwen3:8b\n")
+        with pytest.raises(
+            ValueError, match="'qwen3:8b' missing required 'server_args'"
+        ):
+            load_llm_models(str(models_file))
+
+    def test_server_args_must_be_a_mapping(self, tmp_path):
+        models_file = tmp_path / "models.yaml"
+        models_file.write_text("- name: m\n  server_args: [-m, x]\n")
+        with pytest.raises(TypeError, match="server_args"):
+            load_llm_models(str(models_file))
+
+    def test_options_is_called_generation_options_now(self, tmp_path):
+        models_file = tmp_path / "models.yaml"
+        models_file.write_text(
+            "- name: m\n  server_args: {-m: x}\n  options: {temperature: 0.7}\n"
+        )
+        with pytest.raises(ValueError, match="generation_options"):
+            load_llm_models(str(models_file))
+
+    def test_generation_options_must_be_a_mapping(self, tmp_path):
+        models_file = tmp_path / "models.yaml"
+        models_file.write_text(
+            "- name: m\n  server_args: {-m: x}\n  generation_options: [1]\n"
+        )
+        with pytest.raises(TypeError, match="generation_options"):
+            load_llm_models(str(models_file))
+
+    def test_the_shipped_models_file_loads_and_uses_llama_option_names(self):
+        from prompt_runner.llm_runner import OLLAMA_ONLY
+
+        models = load_llm_models("config/llm_models.yaml")
+        assert models and all("-m" in m["server_args"] for m in models)
+        for m in models:
+            assert not set(m.get("generation_options", {})) & set(OLLAMA_ONLY), m[
+                "name"
+            ]
+            assert "repetition_penalty" not in m.get(
+                "generation_options", {}
+            )  # llama.cpp: repeat_penalty
 
 
 class TestLoadImageModels:

@@ -3,7 +3,6 @@
 import base64
 import json
 import os
-import secrets
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -12,15 +11,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .sdcpp_server import SdCppError, SdCppServer, engine_version
+from .sdcpp_server import SdCppServer
+from .server_process import ServerError, engine_version
 from .utils import (
     append_jsonl,
     generate_run_identifiers,
-    merge_image_options,
+    merge_options,
+    merged_server_args,
+    random_seed,
     sanitize_fs_name,
 )
 
-MAX_SEED = 2**31 - 1
 # Request fields that hold one image; they are file paths in a job and base64 on the wire.
 IMAGE_FIELDS = ("init_image", "mask_image", "control_image", "ip_adapter_image")
 
@@ -69,7 +70,7 @@ def prepare_request(options: dict[str, Any]) -> tuple[dict[str, Any], dict[str, 
     """
     recorded = dict(options)
     if recorded.get("seed") in (None, -1):
-        recorded["seed"] = secrets.randbelow(MAX_SEED)
+        recorded["seed"] = random_seed()
     request = dict(recorded)
     for key in IMAGE_FIELDS:
         if recorded.get(key):
@@ -128,7 +129,7 @@ class _Run:
 
     def options_for(self, job: Job) -> dict[str, Any]:
         """The job's request fields: defaults < model generation_options < job options."""
-        return merge_image_options(
+        return merge_options(
             self.generation_defaults,
             job.model.get("generation_options"),
             job.options,
@@ -214,7 +215,7 @@ class _Run:
         start = time.time()
         try:
             images = server.generate(request)
-        except SdCppError as e:
+        except ServerError as e:
             self.failed(job, args, recorded, index, e.kind, e.message, e.exit_code)
             return e.kind == "server_died"
         elapsed = round(time.time() - start, 3)
@@ -260,7 +261,7 @@ class _Run:
                     if self.run_job(server, job, args, index):
                         rest = group[index + 1 :]
                         break
-        except SdCppError as e:
+        except ServerError as e:
             # The server failed to start (or died on its way up).
             first = group[0]
             options = self.options_for(first)
@@ -268,13 +269,6 @@ class _Run:
             rest = group[1:]
         for job in rest:
             self.skipped(job, args)
-
-
-def merged_server_args(
-    server_defaults: dict[str, Any] | None, model: dict[str, Any]
-) -> dict[str, Any]:
-    """The server flags of a model: `server_defaults` under the model's own `server_args`."""
-    return merge_image_options(server_defaults, model["server_args"])
 
 
 def run_jobs(

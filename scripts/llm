@@ -1,0 +1,9 @@
+#!/home/shared/ai/prompt-runner/.venv/bin/python
+"""llm: see `llm --help`. A thin shim; the code is in src/prompt_runner/llm.py."""
+
+import sys
+from pathlib import Path
+
+from prompt_runner.llm import main
+
+sys.exit(main(repo_root=Path(__file__).resolve().parent.parent))

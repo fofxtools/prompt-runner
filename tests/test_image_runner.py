@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from prompt_runner.image_runner import Job, prepare_request, run_jobs
-from prompt_runner.sdcpp_server import SdCppError
+from prompt_runner.server_process import ServerError
 
 
 class FakeServer:
@@ -34,7 +34,7 @@ class FakeServer:
     def generate(self, request: dict[str, Any]) -> list[bytes]:
         self.requests.append(request)
         outcome = FakeServer.outcomes.pop(0) if FakeServer.outcomes else [b"png"]
-        if isinstance(outcome, SdCppError):
+        if isinstance(outcome, ServerError):
             raise outcome
         return list(outcome)
 
@@ -319,7 +319,7 @@ class TestOpenServer:
 
     def test_rows_record_the_supplied_servers_own_log(self, tmp_path):
         server = FakeServer("sd", {}, Path("/elsewhere/kept.log"))
-        FakeServer.outcomes = [SdCppError("job_failed", "out of memory")]
+        FakeServer.outcomes = [ServerError("job_failed", "out of memory")]
 
         run(
             tmp_path,
@@ -388,7 +388,7 @@ class TestRunJobsSkipExisting:
 
 class TestRunJobsFailures:
     def test_job_failure_is_recorded_and_the_run_continues(self, tmp_path):
-        FakeServer.outcomes = [SdCppError("job_failed", "out of memory"), [b"png"]]
+        FakeServer.outcomes = [ServerError("job_failed", "out of memory"), [b"png"]]
         m = model("m")
 
         rows = run(tmp_path, [job(tmp_path, "a", m), job(tmp_path, "b", m)])
@@ -407,7 +407,7 @@ class TestRunJobsFailures:
         assert read_log(tmp_path) == rows
 
     def test_server_death_skips_the_rest_of_the_group_but_not_the_next(self, tmp_path):
-        FakeServer.outcomes = [SdCppError("server_died", "gone", 9), [b"png"]]
+        FakeServer.outcomes = [ServerError("server_died", "gone", 9), [b"png"]]
         a, b = model("a"), model("b")
         jobs = [job(tmp_path, "1", a), job(tmp_path, "2", a), job(tmp_path, "3", b)]
 
@@ -424,7 +424,7 @@ class TestRunJobsFailures:
         class StartFails(FakeServer):
             def __enter__(self) -> "FakeServer":
                 if self.args.get("--bad"):
-                    raise SdCppError("server_died", "exited with code 1", 1)
+                    raise ServerError("server_died", "exited with code 1", 1)
                 return self
 
         jobs = [

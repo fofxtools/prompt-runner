@@ -1,9 +1,16 @@
 # Each prompt must have:
 # - id: lowercase alphanumeric + underscore only
-# - prompt: string or block
-# - options: optional, passed verbatim to ollama
+# - prompt: string or block (sent as one user message)
+# - options: optional request fields for llama-server (temperature, max_tokens, seed, ...), over the model's
+# - images: optional, with a prompt: a list of image files sent with it, before the text (the model needs an --mmproj).
+#   With messages, a user message has its own images list. The log records the paths, not the images.
+#   PNG, JPEG, GIF, BMP and WebP work, TIFF does not. Paths are used as written (relative ones from where you run).
+#   Example:
+#     - id: caption_fox
+#       prompt: Write a long descriptive caption for this image in a formal tone.
+#       images: [/home/shared/ai/tmp/images/fox.png]
 
-# --- Completion-style prompts ---
+# --- Single-message prompts ---
 
 - id: little_red_riding_hood
   prompt: Write a modern version of Little Red Riding Hood.
@@ -17,7 +24,7 @@
 - id: electromagnetism
   prompt: Explain electromagnetism to a high schooler.
 
-# --- Chat-style prompts ---
+# --- Prompts with messages (system, user and assistant turns) ---
 
 - id: helpful_storyteller_chat
   messages:

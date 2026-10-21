@@ -66,74 +66,13 @@ def generate_run_identifiers() -> tuple[str, str, str]:
     return run_id, run_dir_name, created_at
 
 
-def create_result_structure(run_dir_name: str, results_dir: str) -> Path:
-    """
-    Create the result directory structure for a run.
-
-    Args:
-        run_dir_name: The filesystem-safe run directory name
-        results_dir: The base results directory path
-
-    Returns:
-        Path object for the created run directory
-
-    Raises:
-        FileExistsError: If the run directory already exists
-    """
-    results_path = Path(results_dir)
-    run_path = results_path / run_dir_name
-
-    if run_path.exists():
-        raise FileExistsError(f"Run directory already exists: {run_path}")
-
-    # Create the directory structure
-    run_path.mkdir(parents=True)
-
-    return run_path
-
-
-def merge_options(
-    global_defaults: dict[str, Any] | None,
-    model_options: dict[str, Any] | None,
-    prompt_options: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """
-    Merge global defaults, model-level and prompt-level options.
-
-    Priority (lowest to highest):
-    1. Global defaults from config
-    2. Model-level options
-    3. Prompt-level options (highest priority)
-
-    Args:
-        global_defaults: Global generation defaults from config (can be None)
-        model_options: Options from the model configuration (can be None)
-        prompt_options: Options from the prompt configuration (can be None)
-
-    Returns:
-        Merged options dictionary (passed verbatim to ollama)
-    """
-    merged = {}
-
-    if global_defaults:
-        merged.update(global_defaults)
-
-    if model_options:
-        merged.update(model_options)
-
-    if prompt_options:
-        merged.update(prompt_options)
-
-    return merged
-
-
-def merge_image_options(*layers: dict[str, Any] | None) -> dict[str, Any]:
+def merge_options(*layers: dict[str, Any] | None) -> dict[str, Any]:
     """
     Recursively merge option layers, later layers winning.
 
     Mappings merge key by key; everything else (scalars, lists) is replaced
-    wholesale. Used for generation options (global defaults < model < prompt)
-    and for sd-server flags (config defaults < model). The result shares no
+    wholesale. Used for request options (global defaults < model < prompt)
+    and for server flags (config defaults < model). The result shares no
     state with the inputs.
 
     Args:
@@ -143,9 +82,9 @@ def merge_image_options(*layers: dict[str, Any] | None) -> dict[str, Any]:
         A new merged dictionary
 
     Examples:
-        >>> merge_image_options({'width': 512}, {'width': 1024}, None)
+        >>> merge_options({'width': 512}, {'width': 1024}, None)
         {'width': 1024}
-        >>> merge_image_options(
+        >>> merge_options(
         ...     {'sample_params': {'sample_steps': 4, 'scheduler': 'discrete'}},
         ...     {'sample_params': {'sample_steps': 20}},
         ... )
@@ -155,10 +94,22 @@ def merge_image_options(*layers: dict[str, Any] | None) -> dict[str, Any]:
     for layer in layers:
         for key, value in (layer or {}).items():
             if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = merge_image_options(merged[key], value)
+                merged[key] = merge_options(merged[key], value)
             else:
                 merged[key] = copy.deepcopy(value)
     return merged
+
+
+def merged_server_args(
+    server_defaults: dict[str, Any] | None, model: dict[str, Any]
+) -> dict[str, Any]:
+    """The server flags of a model: `server_defaults` under the model's own `server_args`."""
+    return merge_options(server_defaults, model["server_args"])
+
+
+def random_seed() -> int:
+    """A random seed that fits the 32-bit seeds of stable-diffusion.cpp and llama.cpp."""
+    return secrets.randbelow(2**31 - 1)
 
 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
