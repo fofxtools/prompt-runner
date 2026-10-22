@@ -1,17 +1,19 @@
 """Unit tests for src/prompt_runner/llm_runner.py"""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
 
-from prompt_runner.llama_server import ChatReply
+from prompt_runner.llama_server import ChatReply, DeltaKind
 from prompt_runner.llm_runner import (
     LlmJob,
     prompt_messages,
     reply_metrics,
+    request_options,
     run_llm_eval,
     run_llm_jobs,
 )
@@ -60,12 +62,20 @@ class FakeServer:
         pass
 
     def chat(
-        self, messages: list[dict[str, Any]], options: dict[str, Any] | None = None
+        self,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        on_delta: Callable[[DeltaKind, str], None] | None = None,
     ) -> ChatReply:
         self.chats.append((messages, options or {}))
         outcome = FakeServer.outcomes.pop(0) if FakeServer.outcomes else reply()
         if isinstance(outcome, (ServerError, OSError)):
             raise outcome
+        if on_delta is not None:
+            if outcome.reasoning:
+                on_delta("reasoning", outcome.reasoning)
+            if outcome.text:
+                on_delta("text", outcome.text)
         return outcome
 
 
@@ -121,6 +131,102 @@ class TestReplyMetrics:
         metrics = reply_metrics({"prompt_n": 7, "predicted_n": 3, "predicted_ms": 0})
         assert metrics["input_tokens"] == 7
         assert metrics["output_tokens_per_second"] is None
+
+
+class TestRequestOptions:
+    """The sampling for non-thinking mode (`no_thinking_options`) applies whenever thinking is off."""
+
+    MODEL: ClassVar[dict[str, Any]] = {
+        "name": "m",
+        "server_args": {},
+        "generation_options": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+        "no_thinking_options": {"temperature": 0.7, "top_p": 0.8},
+    }
+    OFF: ClassVar[dict[str, Any]] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def test_with_thinking_on_they_are_not_used(self):
+        assert request_options({"seed": 1}, self.MODEL, {}) == {
+            "seed": 1,
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "top_k": 20,
+        }
+        on = {"chat_template_kwargs": {"enable_thinking": True}}
+        assert request_options(None, self.MODEL, on)["temperature"] == 1.0
+
+    def test_a_request_that_switches_thinking_off_gets_them_over_the_models_own(self):
+        options = request_options({"seed": 1}, self.MODEL, self.OFF)
+        assert options == {
+            "seed": 1,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 20,  # the rest of the model's set stays
+            **self.OFF,
+        }
+
+    def test_the_requests_own_fields_still_win(self):
+        options = request_options(None, self.MODEL, {**self.OFF, "temperature": 0.2})
+        assert (options["temperature"], options["top_p"]) == (0.2, 0.8)
+
+    def test_a_model_or_the_defaults_that_switch_thinking_off_count_too(self):
+        model = {
+            **self.MODEL,
+            "generation_options": {**self.MODEL["generation_options"], **self.OFF},
+        }
+        assert request_options(None, model, {})["temperature"] == 0.7
+        assert request_options(self.OFF, self.MODEL, {})["temperature"] == 0.7
+
+    def test_a_model_without_them_is_unchanged(self):
+        model = {k: v for k, v in self.MODEL.items() if k != "no_thinking_options"}
+        assert request_options(None, model, self.OFF)["temperature"] == 1.0
+
+    def test_other_ways_of_saying_off_are_not_guessed(self):
+        for kwargs in ({}, {"enable_thinking": None}, {"enable_thinking": 0}):
+            assert (
+                request_options(None, self.MODEL, {"chat_template_kwargs": kwargs})[
+                    "temperature"
+                ]
+                == 1.0
+            )
+
+    def test_the_inputs_are_not_modified(self):
+        before = json.dumps(self.MODEL, sort_keys=True)
+        request_options({"seed": 1}, self.MODEL, dict(self.OFF))
+        assert json.dumps(self.MODEL, sort_keys=True) == before
+
+
+@pytest.mark.usefixtures("fake_server")
+class TestNoThinkingInRuns:
+    def model(self) -> dict[str, Any]:
+        m = model("m")
+        m["generation_options"] = {"temperature": 1.0, "top_p": 0.95}
+        m["no_thinking_options"] = {"temperature": 0.7, "top_p": 0.8}
+        return m
+
+    def test_the_server_gets_and_the_row_records_the_non_thinking_sampling(
+        self, tmp_path
+    ):
+        off = {"chat_template_kwargs": {"enable_thinking": False}}
+        on_job = job(tmp_path, "on", self.model())
+        off_job = job(tmp_path, "off", self.model(), **off)
+
+        on_row, off_row = run(tmp_path, [on_job, off_job])
+
+        sent = FakeServer.instances[0].chats
+        assert (sent[0][1]["temperature"], sent[1][1]["temperature"]) == (1.0, 0.7)
+        assert (
+            off_row["sampling"]["temperature"] == 0.7
+            and off_row["sampling"]["top_p"] == 0.8
+        )
+        assert on_row["sampling"]["temperature"] == 1.0
+        assert off_row["request"]["temperature"] == 0.7
+
+    def test_the_ollama_check_sees_the_final_options(self, tmp_path):
+        m = self.model()
+        m["no_thinking_options"] = {"num_predict": 5}
+        off = {"chat_template_kwargs": {"enable_thinking": False}}
+        with pytest.raises(ValueError, match="num_predict"):
+            run(tmp_path, [job(tmp_path, "off", m, **off)])
 
 
 class TestPromptMessages:
@@ -415,6 +521,143 @@ class TestFailures:
 
 
 @pytest.mark.usefixtures("fake_server")
+class TestOnDelta:
+    def test_pieces_arrive_in_order_and_the_row_is_still_complete(self, tmp_path):
+        FakeServer.outcomes = [reply("Answer", "Thinking")]
+        pieces: list[tuple[str, str]] = []
+
+        (row,) = run(
+            tmp_path,
+            [job(tmp_path, "p", model("m"))],
+            on_delta=lambda kind, piece: pieces.append((kind, piece)),
+        )
+
+        assert pieces == [("reasoning", "Thinking"), ("text", "Answer")]
+        assert row["output"] == {"text": "Answer", "reasoning": "Thinking"}
+        assert row["status"] == "ok"
+
+    def test_it_sees_every_job_and_none_is_fine(self, tmp_path):
+        FakeServer.outcomes = [reply("One"), reply("Two")]
+        texts: list[str] = []
+        jobs = [job(tmp_path, "a", model("m")), job(tmp_path, "b", model("m"))]
+
+        run(tmp_path, jobs, on_delta=lambda kind, piece: texts.append(piece))
+        assert texts == ["One", "Two"]
+
+        FakeServer.outcomes = [reply("Three")]
+        rows = run(tmp_path, [job(tmp_path, "c", model("m"))])  # no callback
+        assert rows[0]["output"]["text"] == "Three"
+
+
+@pytest.mark.usefixtures("fake_server")
+class TestSay:
+    def lines_of_a_run(self, tmp_path: Path, **kwargs: Any) -> list[str]:
+        """Ok, failed, skipped (a server death) and a failed start, with `say` given."""
+
+        class StartFails(FakeServer):
+            def __enter__(self) -> "FakeServer":
+                if self.args.get("--bad"):
+                    raise ServerError("server_died", "exited with code 1", 1)
+                return self
+
+        FakeServer.outcomes = [
+            reply(),
+            ServerError("job_failed", "too long"),
+            ServerError("server_died", "gone"),
+        ]
+        a, bad = model("a"), model("bad", **{"--bad": True})
+        jobs = [
+            job(tmp_path, "1", a),
+            job(tmp_path, "2", a),
+            job(tmp_path, "3", a),
+            job(tmp_path, "4", a),
+            job(tmp_path, "5", bad),
+        ]
+        said: list[str] = []
+        with patch("prompt_runner.llm_runner.LlamaServer", StartFails):
+            run(tmp_path, jobs, say=said.append, **kwargs)
+        return said
+
+    def test_every_progress_line_goes_through_say_and_none_to_stdout(
+        self, tmp_path, capsys
+    ):
+        said = self.lines_of_a_run(tmp_path)
+
+        assert capsys.readouterr().out == ""
+        text = "\n".join(said)
+        assert "Starting server: a (4 job(s))" in text
+        assert "[1/5] 1/a.md: ok" in text
+        assert "[2/5] 2/a.md: FAILED (job_failed): too long" in text
+        assert "[3/5] 3/a.md: FAILED (server_died): gone" in text
+        assert "[4/5] 4/a.md: skipped (server failed)" in text
+        assert "Starting server: bad (1 job(s))" in text
+        assert "[5/5] 5/bad.md: FAILED (server_died): exited with code 1" in text
+
+    def test_without_say_the_lines_are_printed(self, tmp_path, capsys):
+        run(tmp_path, [job(tmp_path, "p", model("m"))])
+        out = capsys.readouterr().out
+        assert "Starting server: m" in out and "[1/1] p/m.md: ok" in out
+
+
+@pytest.mark.usefixtures("fake_server")
+class TestJobsWithoutAFile:
+    def bare(self, m: dict[str, Any], text: str = "hi", **tags: Any) -> LlmJob:
+        return LlmJob(
+            m, [{"role": "user", "content": text}], options={"seed": 1}, tags=tags
+        )
+
+    def test_no_file_is_written_and_the_answer_is_in_the_row(self, tmp_path):
+        FakeServer.outcomes = [reply("Answer", "Thinking")]
+
+        (row,) = run(tmp_path, [self.bare(model("m"))])
+
+        assert row["status"] == "ok"
+        assert row["output_file"] is None
+        assert row["output"] == {"text": "Answer", "reasoning": "Thinking"}
+        assert [p.name for p in tmp_path.iterdir()] == ["runs.jsonl"]  # no answer file
+        assert read_log(tmp_path) == [row]
+
+    def test_out_stays_none(self):
+        assert self.bare(model("m")).out is None
+
+    def test_any_number_of_them_can_share_a_run(self, tmp_path):
+        jobs = [self.bare(model("m"), turn=1), self.bare(model("m"), turn=2)]
+        rows = run(tmp_path, jobs)
+        assert [r["status"] for r in rows] == ["ok", "ok"]
+
+    def test_duplicates_are_still_found_among_the_jobs_that_have_a_file(self, tmp_path):
+        m = model("m")
+        jobs = [job(tmp_path, "x", m), self.bare(m), job(tmp_path, "x", m)]
+        with pytest.raises(ValueError, match="Duplicate output paths"):
+            run(tmp_path, jobs)
+
+    def test_progress_names_the_model_instead_of_a_file(self, tmp_path):
+        FakeServer.outcomes = [reply(), ServerError("job_failed", "no")]
+        said: list[str] = []
+        run(tmp_path, [self.bare(model("m")), self.bare(model("m"))], say=said.append)
+        assert (
+            "  [1/2] m: ok" in said[1]
+            and "  [2/2] m: FAILED (job_failed): no" in said[2]
+        )
+
+    def test_a_failed_one_has_no_output_file_either(self, tmp_path):
+        FakeServer.outcomes = [ServerError("job_failed", "no")]
+        (row,) = run(tmp_path, [self.bare(model("m"))])
+        assert (row["status"], row["output_file"]) == ("failed", None)
+
+    def test_the_images_check_names_the_model_not_none(self, tmp_path):
+        pic = tmp_path / "p.png"
+        pic.write_bytes(b"x")
+        bare = LlmJob(
+            model("m"), [{"role": "user", "content": "x", "images": [str(pic)]}]
+        )
+        with pytest.raises(
+            ValueError, match="Job m has images but model 'm' has no --mmproj"
+        ):
+            run(tmp_path, [bare])
+
+
+@pytest.mark.usefixtures("fake_server")
 class TestValidation:
     @pytest.mark.parametrize("where", ["defaults", "model", "job"])
     @pytest.mark.parametrize("name", ["num_predict", "num_ctx"])
@@ -494,6 +737,44 @@ class TestOpenServer:
         )
 
         assert read_log(tmp_path)[0]["server_log"] == "/elsewhere/kept.log"
+
+    def test_a_remote_server_needs_no_binary_and_no_log_and_gives_its_own_engine(
+        self, tmp_path
+    ):
+        server: Any = FakeServer("", {}, None)  # type: ignore[arg-type]  # as attach() without a log
+        FakeServer.instances.clear()
+
+        rows = run_llm_jobs(
+            [job(tmp_path, "one", model("m"))],
+            out_dir=tmp_path,
+            open_server=lambda binary, args, log_path: server,
+            engine="b1 (remote)",
+        )
+
+        assert rows[0]["status"] == "ok"
+        assert (rows[0]["engine"], rows[0]["server_log"]) == ("b1 (remote)", None)
+        assert FakeServer.instances == []
+
+    def test_the_starting_server_line_is_only_for_a_server_the_runner_starts(
+        self, tmp_path
+    ):
+        said: list[str] = []
+        run(tmp_path, [job(tmp_path, "one", model("m"))], say=said.append)
+        assert any(line.startswith("Starting server: m") for line in said)
+
+        said.clear()
+        server: Any = FakeServer("llama", {}, tmp_path / "kept.log")
+        run(
+            tmp_path,
+            [job(tmp_path, "two", model("m"))],
+            open_server=lambda binary, args, log_path: server,
+            say=said.append,
+        )
+        assert len(said) == 1 and "[1/1] two" in said[0]  # only the progress line
+
+    def test_no_binary_and_no_open_server_is_an_error(self, tmp_path):
+        with pytest.raises(ValueError, match="binary"):
+            run_llm_jobs([job(tmp_path, "one", model("m"))], out_dir=tmp_path)
 
 
 @pytest.mark.usefixtures("fake_server")
@@ -632,6 +913,35 @@ class TestWithAFakeLlamaServer:
         assert (tmp_path / "one" / "fake.md").read_text() == "Hello world"
         assert (tmp_path / rows[0]["server_log"]).is_file()  # next to runs.jsonl
         assert rows[0]["request"]["max_tokens"] == 50
+
+    def test_on_delta_gets_the_real_servers_pieces_in_order(self, fake_llama, tmp_path):
+        m = {"name": "fake", "server_args": {"--mode": "think"}}
+        pieces: list[tuple[str, str]] = []
+
+        (row,) = run_llm_jobs(
+            [LlmJob(m, [{"role": "user", "content": "hi"}])],
+            binary=fake_llama,
+            out_dir=tmp_path,
+            server_defaults={"-np": 1},
+            generation_defaults={"max_tokens": 50},
+            on_delta=lambda kind, piece: pieces.append((kind, piece)),
+            say=lambda line: None,
+        )
+
+        assert row["status"] == "ok" and row["output_file"] is None
+        assert (
+            "".join(p for k, p in pieces if k == "reasoning")
+            == row["output"]["reasoning"]
+        )
+        assert (
+            "".join(p for k, p in pieces if k == "text")
+            == row["output"]["text"]
+            == "Hello world"
+        )
+        kinds = [k for k, _ in pieces]
+        assert kinds.index("text") > max(
+            i for i, k in enumerate(kinds) if k == "reasoning"
+        )
 
     def test_a_server_that_dies_while_loading_is_a_failed_row(
         self, fake_llama, tmp_path

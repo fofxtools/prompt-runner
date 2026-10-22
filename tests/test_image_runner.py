@@ -329,6 +329,47 @@ class TestOpenServer:
 
         assert read_log(tmp_path)[0]["server_log"] == "/elsewhere/kept.log"
 
+    def test_a_remote_server_needs_no_binary_and_no_log_and_gives_its_own_engine(
+        self, tmp_path
+    ):
+        server: Any = FakeServer("", {}, None)  # type: ignore[arg-type]  # as attach() without a log
+        FakeServer.instances.clear()
+
+        rows = run_jobs(
+            [job(tmp_path, "one", model("a"))],
+            out_dir=tmp_path,
+            open_server=lambda binary, args, log_path: server,
+            engine="sd-server (remote)",
+        )
+
+        assert rows[0]["status"] == "ok"
+        assert (rows[0]["engine"], rows[0]["server_log"]) == (
+            "sd-server (remote)",
+            None,
+        )
+        assert FakeServer.instances == []  # `--version` was not asked of a binary
+
+    def test_the_starting_server_line_is_only_for_a_server_the_runner_starts(
+        self, tmp_path, capsys
+    ):
+        run(tmp_path, [job(tmp_path, "one", model("a"))])
+        assert "Starting server: a" in capsys.readouterr().out
+
+        server: Any = FakeServer("sd", {}, tmp_path / "kept.log")
+        run(
+            tmp_path,
+            [job(tmp_path, "two", model("a"))],
+            open_server=lambda binary, args, log_path: server,
+        )
+        out = capsys.readouterr().out
+        assert (
+            "Starting server" not in out and "[1/1] two" in out
+        )  # the rest is still shown
+
+    def test_no_binary_and_no_open_server_is_an_error(self, tmp_path):
+        with pytest.raises(ValueError, match="binary"):
+            run_jobs([job(tmp_path, "one", model("a"))], out_dir=tmp_path)
+
     def test_the_default_still_starts_a_server_per_group(self, tmp_path):
         run(tmp_path, [job(tmp_path, "one", model("a"))])
         assert len(FakeServer.instances) == 1

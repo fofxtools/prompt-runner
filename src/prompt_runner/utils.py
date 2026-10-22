@@ -117,3 +117,46 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def models_table(
+    models: list[dict[str, Any]],
+    running: set[str],
+    file_flags: tuple[str, ...],
+    vision_flags: tuple[str, ...] = (),
+) -> str:
+    """
+    The models as a table: name, size of their files on disk, and `running` or `missing`.
+
+    A model's files are the values of its `server_args` under `file_flags` (the flags that
+    name a model file). One that does not exist makes the model `missing`; `running` holds
+    the names of the models whose server is up. With `vision_flags` (the flags that give a
+    model a vision projector) there is a fourth column, `vision`, for the models that have one.
+    """
+    header: tuple[str, ...] = ("NAME", "SIZE", "STATE") + (
+        ("VISION",) if vision_flags else ()
+    )
+    rows = [header]
+    for model in models:
+        args = model["server_args"]
+        files = [Path(str(args[flag])) for flag in file_flags if args.get(flag)]
+        present = [f for f in files if f.is_file()]
+        size = (
+            f"{sum(f.stat().st_size for f in present) / 1e9:.1f} GB" if files else "-"
+        )
+        if len(present) < len(files):
+            state = "missing"
+        else:
+            state = "running" if model["name"] in running else ""
+        row: tuple[str, ...] = (model["name"], size, state)
+        if vision_flags:
+            row += ("vision" if any(args.get(f) for f in vision_flags) else "",)
+        rows.append(row)
+    width = [max(len(row[i]) for row in rows) for i in range(len(header) - 1)]
+    lines = []
+    for name, size, *rest in rows:
+        cells = [f"{name:<{width[0]}}", f"{size:>{width[1]}}"]
+        cells += [f"{cell:<{width[2 + i]}}" for i, cell in enumerate(rest[:-1])]
+        cells.append(rest[-1])
+        lines.append("  ".join(cells).rstrip())
+    return "\n".join(lines)

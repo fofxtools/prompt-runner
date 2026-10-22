@@ -5,14 +5,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, ImageDraw, ImageFont
+
 LABEL_WIDTH = 150  # left column holding the row labels
 HEADER_HEIGHT = 64  # column labels, below the title
 TITLE_HEIGHT = 30
 
 
 def _font(size: int) -> Any:
-    from PIL import ImageFont
-
     try:
         return ImageFont.load_default(size=size)
     except TypeError:  # Pillow without sized default fonts
@@ -38,17 +38,7 @@ def make_sheet(
         cell_path: cell_path(row, col) -> the image file for that cell. A cell
             whose file does not exist is drawn as a grey "missing" box.
         thumb: Thumbnail size in pixels (images are squashed to a square)
-
-    Raises:
-        ImportError: If Pillow is not installed (pip install prompt-runner[sheets])
     """
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError as e:
-        raise ImportError(
-            "Contact sheets need Pillow: pip install 'prompt-runner[sheets]'"
-        ) from e
-
     font, small = _font(18), _font(14)
     width = LABEL_WIDTH + thumb * len(col_labels)
     height = TITLE_HEIGHT + HEADER_HEIGHT + thumb * len(row_labels)

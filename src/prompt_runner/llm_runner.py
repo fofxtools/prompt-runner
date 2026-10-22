@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .llama_server import SAMPLING_FIELDS, LlamaServer
+from .llama_server import SAMPLING_FIELDS, DeltaKind, LlamaServer
 from .server_process import ServerError, engine_version
 from .utils import (
     append_jsonl,
@@ -43,7 +43,8 @@ class LlmJob:
             generation_options). Not modified.
         messages: OpenAI-style messages; a message can have `images`, a list of image file
             paths sent with it (the log records the paths, not the images)
-        out: Where to write the answer (the final text, as markdown)
+        out: Where to write the answer (the final text, as markdown); None writes no
+            file (the answer is in the log row)
         options: Request fields for this chat (temperature, max_tokens, seed,
             chat_template_kwargs, ...); they win over the model's
         tags: Free-form values copied into the job's log rows (prompt id, ...).
@@ -52,12 +53,13 @@ class LlmJob:
 
     model: dict[str, Any]
     messages: list[dict[str, Any]]
-    out: Path
+    out: Path | None = None
     options: dict[str, Any] = field(default_factory=dict)
     tags: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.out = Path(self.out)
+        if self.out is not None:
+            self.out = Path(self.out)
 
 
 def prompt_messages(prompt: dict[str, Any]) -> list[dict[str, Any]]:
@@ -69,6 +71,36 @@ def prompt_messages(prompt: dict[str, Any]) -> list[dict[str, Any]]:
     if prompt.get("images"):
         message["images"] = prompt["images"]
     return [message]
+
+
+def request_options(
+    generation_defaults: dict[str, Any] | None,
+    model: dict[str, Any],
+    job_options: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    A chat's request fields: defaults < the model's generation_options < the job's own options.
+
+    When thinking is switched off (`chat_template_kwargs.enable_thinking` is false, from the
+    model, the defaults or the job), the model's `no_thinking_options` go in between: the
+    sampling its authors recommend for that mode. The job's own options still win.
+    """
+    options = merge_options(
+        generation_defaults, model.get("generation_options"), job_options
+    )
+    kwargs = options.get("chat_template_kwargs")
+    if (
+        model.get("no_thinking_options")
+        and isinstance(kwargs, dict)
+        and kwargs.get("enable_thinking") is False
+    ):
+        options = merge_options(
+            generation_defaults,
+            model.get("generation_options"),
+            model["no_thinking_options"],
+            job_options,
+        )
+    return options
 
 
 def reply_metrics(timings: dict[str, Any]) -> dict[str, Any]:
@@ -113,6 +145,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _label(job: LlmJob) -> str:
+    """What names a job in a message: its output file, else its model."""
+    return str(job.out) if job.out is not None else job.model["name"]
+
+
 class _Run:
     """State shared by the groups of one run_llm_jobs() call."""
 
@@ -126,6 +163,8 @@ class _Run:
         write_log: bool,
         total: int,
         open_server: Callable[[str, dict[str, Any], Path], LlamaServer] | None = None,
+        on_delta: Callable[[DeltaKind, str], None] | None = None,
+        say: Callable[[str], None] = print,
     ) -> None:
         self.run_id = run_id
         self.binary = binary
@@ -135,9 +174,11 @@ class _Run:
         self.log_path = out_dir / "runs.jsonl" if write_log else None
         self.total = total
         self.open_server = open_server
+        self.on_delta = on_delta
+        self.say = say
         self.done = 0
         self.rows: list[dict[str, Any]] = []
-        self.server_log = ""  # of the group being run, relative to out_dir
+        self.server_log: str | None = ""  # of the group being run, relative to out_dir
         self.server_sampling: dict[str, Any] = (
             {}
         )  # what its server uses when a chat sets none
@@ -148,13 +189,13 @@ class _Run:
         base = Path(os.path.abspath(self.out_dir))
         return str(path.relative_to(base)) if path.is_relative_to(base) else str(path)
 
+    def label(self, job: LlmJob) -> str:
+        """What names a job in the progress lines: its output file (relative to out_dir), else its model."""
+        return self.rel(job.out) if job.out is not None else job.model["name"]
+
     def options_for(self, job: LlmJob) -> dict[str, Any]:
-        """The job's request fields: defaults < model generation_options < job options."""
-        return merge_options(
-            self.generation_defaults,
-            job.model.get("generation_options"),
-            job.options,
-        )
+        """The job's request fields (see `request_options`)."""
+        return request_options(self.generation_defaults, job.model, job.options)
 
     def emit(self, job: LlmJob, status: str, **fields: Any) -> None:
         """Record one row in the results and in runs.jsonl."""
@@ -201,8 +242,8 @@ class _Run:
         exit_code: int | None = None,
     ) -> None:
         self.done += 1
-        print(
-            f"  [{self.done}/{self.total}] {self.rel(job.out)}: FAILED ({kind}): {error}"
+        self.say(
+            f"  [{self.done}/{self.total}] {self.label(job)}: FAILED ({kind}): {error}"
         )
         self.emit(
             job,
@@ -219,8 +260,8 @@ class _Run:
 
     def skipped(self, job: LlmJob, args: dict[str, Any]) -> None:
         self.done += 1
-        print(
-            f"  [{self.done}/{self.total}] {self.rel(job.out)}: skipped (server failed)"
+        self.say(
+            f"  [{self.done}/{self.total}] {self.label(job)}: skipped (server failed)"
         )
         request = self.request_of(job, self.options_for(job))
         self.emit(
@@ -249,7 +290,7 @@ class _Run:
 
         start = time.time()
         try:
-            reply = server.chat(job.messages, options)
+            reply = server.chat(job.messages, options, on_delta=self.on_delta)
         except ServerError as e:
             self.failed(job, args, request, index, e.kind, e.message, e.exit_code)
             return e.kind == "server_died"
@@ -258,15 +299,16 @@ class _Run:
             return False
         elapsed = round(time.time() - start, 3)
 
-        job.out.parent.mkdir(parents=True, exist_ok=True)
-        job.out.write_text(reply.text, encoding="utf-8")
+        if job.out is not None:
+            job.out.parent.mkdir(parents=True, exist_ok=True)
+            job.out.write_text(reply.text, encoding="utf-8")
         self.done += 1
         note = " (stopped at max_tokens)" if reply.finish_reason == "length" else ""
-        print(f"  [{self.done}/{self.total}] {self.rel(job.out)}: ok {elapsed}s{note}")
+        self.say(f"  [{self.done}/{self.total}] {self.label(job)}: ok {elapsed}s{note}")
         self.emit(
             job,
             "ok",
-            output_file=self.rel(job.out),
+            output_file=self.rel(job.out) if job.out is not None else None,
             seed=options["seed"],
             request=request,
             output={"text": reply.text, "reasoning": reply.reasoning},
@@ -293,7 +335,10 @@ class _Run:
             / f"{sanitize_fs_name(self.run_id)}__{number}__{sanitize_fs_name(name)}.log"
         )
         self.server_log = self.rel(log_file)
-        print(f"Starting server: {name} ({len(group)} job(s))")
+        if (
+            self.open_server is None
+        ):  # a supplied server (kept, remote) is not started here
+            self.say(f"Starting server: {name} ({len(group)} job(s))")
 
         rest: list[LlmJob] = []
         # LlamaServer is looked up here, not at import, so tests can patch it.
@@ -301,7 +346,7 @@ class _Run:
         opened = time.time()
         try:
             with open_server(self.binary, args, log_file) as server:
-                self.server_log = self.rel(server.log_path)
+                self.server_log = self.rel(server.log_path) if server.log_path else None
                 start_seconds = round(time.time() - opened, 3)  # the model load
                 self.server_sampling = server.sampling_defaults()
                 for index, job in enumerate(group):
@@ -323,12 +368,15 @@ class _Run:
 def run_llm_jobs(
     jobs: list[LlmJob],
     *,
-    binary: str,
+    binary: str = "",
     out_dir: Path,
     server_defaults: dict[str, Any] | None = None,
     generation_defaults: dict[str, Any] | None = None,
     write_log: bool = True,
     open_server: Callable[[str, dict[str, Any], Path], LlamaServer] | None = None,
+    engine: str | None = None,
+    on_delta: Callable[[DeltaKind, str], None] | None = None,
+    say: Callable[[str], None] = print,
     run_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -347,27 +395,35 @@ def run_llm_jobs(
 
     Args:
         jobs: The chats to run
-        binary: Path to the `llama` executable (`serve` is added)
+        binary: Path to the `llama` executable (`serve` is added); not needed with
+            `open_server` and `engine`
         out_dir: Where runs.jsonl and server_logs/ go (job outputs can be anywhere)
         server_defaults: `llama serve` flags added to every model's server_args
         generation_defaults: Request fields under every model's generation_options
         write_log: Set False to skip runs.jsonl (server logs are still written)
         open_server: Called as open_server(binary, server_args, log_path) to get the
             server for a group, used as a context manager (default: start a new
-            LlamaServer, stopped when the group is done)
+            LlamaServer, stopped when the group is done); a remote server has no log, so
+            its rows record null
+        engine: What the rows record as the engine (default: the first line of
+            `binary --version`); a caller whose server runs elsewhere gives its own
+        on_delta: Called as `on_delta(kind, piece)` for each piece of reasoning and of the
+            answer as it streams in, for every job (for a caller that runs one job and shows it)
+        say: Gets each progress line (default: print); a tool whose stdout is its result
+            passes a function that writes to stderr or drops them
         run_id: The id recorded in the rows (default: a new one)
 
     Returns:
         The log rows of this run
 
     Raises:
-        ValueError: If binary is empty, two jobs have the same output path, a
+        ValueError: If there is neither a binary nor an open_server, two jobs have the same output path, a
             request option is an Ollama option that llama-server would ignore, an
             image file does not exist, or a job has images for a model without --mmproj
     """
-    if not binary:
+    if not binary and open_server is None:
         raise ValueError("binary (path to the llama executable) is required")
-    outs = Counter(os.path.abspath(job.out) for job in jobs)
+    outs = Counter(os.path.abspath(job.out) for job in jobs if job.out is not None)
     duplicates = sorted(path for path, count in outs.items() if count > 1)
     if duplicates:
         raise ValueError(
@@ -375,16 +431,14 @@ def run_llm_jobs(
         )
     missing: list[str] = []
     for job in jobs:
-        options = merge_options(
-            generation_defaults, job.model.get("generation_options"), job.options
-        )
+        options = request_options(generation_defaults, job.model, job.options)
         _check_options(options, job.model["name"])
         images = [p for message in job.messages for p in message.get("images") or []]
         missing += [p for p in images if not Path(p).is_file()]
         args = merged_server_args(server_defaults, job.model)
         if images and not any(args.get(flag) for flag in MMPROJ_FLAGS):
             raise ValueError(
-                f"Job {job.out} has images but model '{job.model['name']}' has no --mmproj in its server_args"
+                f"Job {_label(job)} has images but model '{job.model['name']}' has no --mmproj in its server_args"
             )
     if missing:
         raise ValueError(f"Image file(s) not found: {sorted(set(missing))}")
@@ -400,12 +454,14 @@ def run_llm_jobs(
     run = _Run(
         run_id or generate_run_identifiers()[0],
         binary,
-        engine_version(binary),
+        engine if engine is not None else engine_version(binary),
         Path(out_dir),
         generation_defaults,
         write_log,
         len(jobs),
         open_server,
+        on_delta,
+        say,
     )
     for number, (args, group) in enumerate(groups.values()):
         run.run_group(number, args, group)

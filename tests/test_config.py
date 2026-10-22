@@ -1,6 +1,7 @@
 """Unit tests for src/config.py"""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -198,6 +199,22 @@ class TestPromptImages:
         text = "- id: p\n  messages:\n    - {role: assistant, content: x, images: [/a.png]}\n"
         with pytest.raises(ValueError, match="only a user message"):
             load_llm_prompts(self.write(tmp_path, text))
+
+
+class TestNoThinkingOptions:
+    def load(self, tmp_path: Path, extra: str) -> list[dict[str, Any]]:
+        path = tmp_path / "m.yaml"
+        path.write_text(f"- name: m\n  server_args: {{-m: /m.gguf}}\n{extra}")
+        return load_llm_models(str(path))
+
+    def test_a_dictionary_is_accepted(self, tmp_path):
+        (model,) = self.load(tmp_path, "  no_thinking_options: {temperature: 0.7}\n")
+        assert model["no_thinking_options"] == {"temperature": 0.7}
+
+    @pytest.mark.parametrize("value", ["0.7", "[0.7]", "null"])
+    def test_anything_else_is_refused(self, tmp_path, value):
+        with pytest.raises(TypeError, match="no_thinking_options"):
+            self.load(tmp_path, f"  no_thinking_options: {value}\n")
 
 
 class TestLoadModels:

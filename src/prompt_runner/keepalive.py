@@ -5,10 +5,10 @@ A call starts the model's server if none is ours, leaves it running, and the nex
 `/proc/<pid>/cmdline` ends with the recorded command line, so a reused pid (or a zombie) is never signalled. The same command
 line decides reuse (equal to the one wanted) or replacement (different). Something else listening on the port is refused.
 
-Linux only: it relies on /proc and fcntl.
+Linux only: it relies on /proc and fcntl (the module imports on Windows, where fcntl is missing, but taking the lock does not work there).
 """
 
-import fcntl
+import ipaddress
 import json
 import os
 import signal
@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from .server_process import (
+    DEFAULT_HOST,
     POLL_INTERVAL,
     STOP_TIMEOUT,
     ServerError,
@@ -57,12 +58,17 @@ class KeptServer(Generic[S]):
     lock: Path
     state: Path
     log: Path
+    host: str = DEFAULT_HOST
 
 
 def kept_server(
-    tool: str, server_class: type[S], port: int, directory: Path | None = None
+    tool: str,
+    server_class: type[S],
+    port: int,
+    directory: Path | None = None,
+    host: str = DEFAULT_HOST,
 ) -> KeptServer[S]:
-    """The kept server of `tool` on `port`; its files go in `directory` (default: the temp folder)."""
+    """The kept server of `tool` on `host`:`port`; its files go in `directory` (default: the temp folder)."""
     base = directory if directory is not None else Path(tempfile.gettempdir())
     base.mkdir(parents=True, exist_ok=True)
     stem = f"{tool}-{port}"
@@ -73,7 +79,38 @@ def kept_server(
         base / f"{stem}.lock",
         base / f"{stem}.json",
         base / f"{stem}.log",
+        host,
     )
+
+
+def listen_host(tool: str, config: dict[str, Any] | None = None) -> str:
+    """
+    The address the kept server of `tool` listens on.
+
+    That is $<TOOL>_HOST if set, else `listen_host` in the config, else 127.0.0.1.
+    (Callers that only look at a running server, like --stop and --status, pass no
+    config: the address a server was started with is in its state file.)
+
+    Raises:
+        KeepAliveError: If the address is not an IPv4 address
+    """
+    name = f"{tool.upper()}_HOST"
+    if name in os.environ:
+        source, value = name, os.environ[name]
+    elif config and "listen_host" in config:
+        source, value = "listen_host in config/config.yaml", config["listen_host"]
+    else:
+        return DEFAULT_HOST
+    if isinstance(
+        value, str
+    ):  # YAML can give a number or a list; IPv4Address would take an int
+        try:
+            ipaddress.IPv4Address(value)
+        except ValueError:
+            pass
+        else:
+            return value
+    raise KeepAliveError(f"{source} must be an IPv4 address, got '{value}'")
 
 
 @contextmanager
@@ -84,6 +121,8 @@ def call_lock(kept: KeptServer[Any], wait: float = LOCK_WAIT) -> Iterator[None]:
     The lock goes away with the process, even if it is killed. The file is not
     inherited by the server this call may start.
     """
+    import fcntl  # not on Windows, where only the remote client (no lock) runs
+
     with open(kept.lock, "a") as lock:
         start = time.monotonic()
         told = False
@@ -142,9 +181,9 @@ def _ours(state: dict[str, Any]) -> bool:
     return _cmdline(pid)[-len(argv) :] == argv
 
 
-def _port_in_use(port: int) -> bool:
+def _port_in_use(host: str, port: int) -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1):
+        with socket.create_connection((host, port), timeout=1):
             return True
     except OSError:
         return False
@@ -165,6 +204,27 @@ def running_model(kept: KeptServer[Any]) -> str | None:
         name = state.get("model_name")
         return name if isinstance(name, str) else None
     return None
+
+
+def server_status(kept: KeptServer[Any]) -> str:
+    """
+    One line on the kept server: running (which model, pid, port, log), not answering, not running, or the port taken by something else.
+
+    Read-only and without the lock, so it answers at once even while a call is running.
+    """
+    port = kept.port
+    state = _read_state(kept.state)
+    if state is not None and _ours(state):
+        host = state.get("host", kept.host)
+        where = f"{state.get('model_name')} (pid {state['pid']}) on {host}:{port}; log {kept.log}"
+        if kept.server_class.attach(port, kept.log, host).ready():
+            return f"running {where}"
+        return f"not answering (still loading, or hung): {where}"
+    if _port_in_use(kept.host, port):
+        return (
+            f"{kept.host}:{port} is used by something else (not started by {kept.tool})"
+        )
+    return f"not running ({kept.host}:{port} is free)"
 
 
 def stop_server(kept: KeptServer[Any]) -> None:
@@ -196,10 +256,12 @@ def stop_server(kept: KeptServer[Any]) -> None:
                 f"the {name} (pid {pid}) did not stop; kill it by hand (kill -9 {pid})"
             )
         # A process drops its command line before it closes its sockets: wait for the port too.
-        port = state.get("port")
+        port, host = state.get("port"), state.get("host", kept.host)
         deadline = time.monotonic() + STOP_TIMEOUT
         while (
-            isinstance(port, int) and _port_in_use(port) and time.monotonic() < deadline
+            isinstance(port, int)
+            and _port_in_use(host, port)
+            and time.monotonic() < deadline
         ):
             time.sleep(0.05)
     kept.state.unlink(missing_ok=True)
@@ -240,11 +302,11 @@ def ensure_server(
     """
     server_class, port, tool = kept.server_class, kept.port, kept.tool
     name = server_class.NAME
-    want = server_class.listen_argv(build_argv(binary, args), port)
+    want = server_class.listen_argv(build_argv(binary, args), port, kept.host)
     state = _read_state(kept.state)
     if state is not None and _ours(state):
         if state.get("argv") == want:
-            server = server_class.attach(port, kept.log)
+            server = server_class.attach(port, kept.log, kept.host)
             if _wait_until_answering(server, state):
                 if state.get("model_name") != model_name:
                     _write_state(kept.state, {**state, "model_name": model_name})
@@ -255,20 +317,21 @@ def ensure_server(
     else:
         # The state is stale: the process is gone or the pid was reused.
         kept.state.unlink(missing_ok=True)
-    if _port_in_use(port):
+    if _port_in_use(kept.host, port):
         raise KeepAliveError(
-            f"something is already listening on port {port} that this {tool} did not "
+            f"something is already listening on {kept.host}:{port} that this {tool} did not "
             f"start (a manual {name}, or another session); stop it, or set "
             f"{tool.upper()}_PORT to use another port"
         )
 
-    server = server_class(binary, args, kept.log, port=port, keep=True)
+    server = server_class(binary, args, kept.log, port=port, keep=True, host=kept.host)
     server.spawn()
     # Written before waiting: a call killed while the server starts must not orphan it.
     _write_state(
         kept.state,
         {
             "pid": server.pid,
+            "host": kept.host,
             "port": port,
             "argv": server.argv,
             "model_name": model_name,

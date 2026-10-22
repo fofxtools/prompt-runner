@@ -4,19 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-runner"
-version = "0.3.0"
+version = "0.3.1"
 description = "LLM evaluation toolkit for running prompts across multiple models"
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml",
+    "pillow",
 ]
 
 [project.optional-dependencies]
-sheets = [
-    "pillow",
-]
 dev = [
-    "pillow",
     "black",
     "build",
     "mypy",

@@ -6,6 +6,7 @@ These start real detached processes; a fixture kills any that a test leaves behi
 import json
 import os
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -17,6 +18,7 @@ import pytest
 from prompt_runner import keepalive, server_process
 from prompt_runner.keepalive import (
     KeepAliveError,
+    KeptServer,
     call_lock,
     ensure_server,
     kept_server,
@@ -309,6 +311,146 @@ class TestStopAndRunningModel:
         assert running_model(env.kept) is None
         server, started = env.ensure()
         assert started and env.state()["pid"] == server.pid
+
+
+class TestListenHost:
+    def test_the_default_is_loopback(self, monkeypatch):
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        assert keepalive.listen_host("genimg") == "127.0.0.1"
+        assert keepalive.listen_host("genimg", {"results_dir": "x"}) == "127.0.0.1"
+
+    def test_the_config_is_used_for_every_tool(self, monkeypatch):
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        monkeypatch.delenv("LLM_HOST", raising=False)
+        config = {"listen_host": "0.0.0.0"}
+        assert keepalive.listen_host("genimg", config) == "0.0.0.0"
+        assert keepalive.listen_host("llm", config) == "0.0.0.0"
+
+    def test_the_tools_own_variable_wins_over_the_config(self, monkeypatch):
+        monkeypatch.setenv("LLM_HOST", "192.168.56.1")
+        monkeypatch.setenv("GENIMG_HOST", "127.0.0.2")
+        config = {"listen_host": "0.0.0.0"}
+        assert keepalive.listen_host("llm", config) == "192.168.56.1"
+        assert keepalive.listen_host("genimg", config) == "127.0.0.2"
+        assert keepalive.listen_host("llm") == "192.168.56.1"  # without a config too
+
+    def test_another_tools_variable_does_not_count(self, monkeypatch):
+        monkeypatch.setenv("LLM_HOST", "192.168.56.1")
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        assert keepalive.listen_host("genimg", {"listen_host": "0.0.0.0"}) == "0.0.0.0"
+
+    @pytest.mark.parametrize("text", ["localhost", "::1", "300.1.1.1", "", "1.2.3"])
+    def test_anything_but_an_ipv4_address_in_the_variable_is_refused(
+        self, monkeypatch, text
+    ):
+        monkeypatch.setenv("GENIMG_HOST", text)
+        with pytest.raises(KeepAliveError, match="GENIMG_HOST must be an IPv4 address"):
+            keepalive.listen_host("genimg", {"listen_host": "0.0.0.0"})
+
+    @pytest.mark.parametrize(
+        "value", ["localhost", "::1", 8080, ["0.0.0.0"], None, True]
+    )
+    def test_anything_but_an_ipv4_address_in_the_config_is_refused(
+        self, monkeypatch, value
+    ):
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        with pytest.raises(
+            KeepAliveError,
+            match="listen_host in config/config.yaml must be an IPv4 address",
+        ):
+            keepalive.listen_host("genimg", {"listen_host": value})
+
+
+class TestHost:
+    """A kept server on another address (127.0.0.2 is loopback too, so no network is needed)."""
+
+    def other(self, env: Env, host: str = "127.0.0.2") -> KeptServer[SdCppServer]:
+        return kept_server("genimg", SdCppServer, env.port, env.kept.state.parent, host)
+
+    def test_it_listens_there_and_the_state_remembers_the_address(self, env):
+        kept = self.other(env)
+        server, started = ensure_server(kept, env.binary, env.args, model_name="m")
+        assert started and server.ready()
+        assert json.loads(kept.state.read_text())["host"] == "127.0.0.2"
+        assert keepalive._port_in_use("127.0.0.2", env.port)
+        assert not keepalive._port_in_use("127.0.0.1", env.port)
+
+    def test_the_next_call_reuses_it(self, env):
+        kept = self.other(env)
+        ensure_server(kept, env.binary, env.args, model_name="m")
+        _, started = ensure_server(kept, env.binary, env.args, model_name="m")
+        assert not started
+
+    def test_another_address_replaces_it_and_the_old_port_is_waited_for(self, env):
+        first = self.other(env)
+        ensure_server(first, env.binary, env.args, model_name="m")
+        old_pid = json.loads(first.state.read_text())["pid"]
+
+        _, started = ensure_server(env.kept, env.binary, env.args, model_name="m")
+
+        assert started and gone(old_pid)
+        assert json.loads(env.kept.state.read_text())["host"] == "127.0.0.1"
+        assert not keepalive._port_in_use("127.0.0.2", env.port)
+
+    def test_stopping_uses_the_address_the_server_was_started_with(self, env):
+        ensure_server(self.other(env), env.binary, env.args, model_name="m")
+        pid = env.state()["pid"]
+        stop_server(
+            env.kept
+        )  # this kept server says 127.0.0.1; the state says 127.0.0.2
+        assert gone(pid) and not keepalive._port_in_use("127.0.0.2", env.port)
+
+    def test_status_finds_it_through_the_state_whatever_the_callers_address(self, env):
+        ensure_server(self.other(env), env.binary, env.args, model_name="m")
+        line = keepalive.server_status(env.kept)  # no GENIMG_HOST here
+        assert line.startswith("running m (pid ") and f"on 127.0.0.2:{env.port}" in line
+
+    def test_a_foreign_listener_is_refused_on_that_address_only(self, env):
+        kept = self.other(env)
+        with socket.socket() as other:
+            other.bind(("127.0.0.2", env.port))
+            other.listen()
+            with pytest.raises(KeepAliveError, match=f"127.0.0.2:{env.port}"):
+                ensure_server(kept, env.binary, env.args, model_name="m")
+            assert keepalive.server_status(kept).startswith("127.0.0.2:")
+
+
+class TestServerStatus:
+    def test_a_running_server_says_model_pid_port_and_log(self, env):
+        env.ensure("model-a")
+        line = keepalive.server_status(env.kept)
+        assert line == (
+            f"running model-a (pid {env.state()['pid']}) on 127.0.0.1:{env.port}; "
+            f"log {env.kept.log}"
+        )
+
+    def test_nothing_running_and_the_port_free(self, env):
+        assert keepalive.server_status(env.kept) == (
+            f"not running (127.0.0.1:{env.port} is free)"
+        )
+
+    def test_a_stopped_server_is_not_running(self, env):
+        env.ensure()
+        stop_server(env.kept)
+        assert keepalive.server_status(env.kept).startswith("not running")
+
+    def test_something_else_on_the_port_is_named_as_such(self, env):
+        with socket.socket() as other:
+            other.bind(("127.0.0.1", env.port))
+            other.listen()
+            assert keepalive.server_status(env.kept) == (
+                f"127.0.0.1:{env.port} is used by something else (not started by genimg)"
+            )
+
+    def test_our_process_that_does_not_answer_is_reported(self, env, monkeypatch):
+        env.ensure()
+        monkeypatch.setattr(SdCppServer, "ready", lambda self: False)
+        assert keepalive.server_status(env.kept).startswith("not answering")
+
+    def test_it_does_not_wait_for_the_lock(self, env):
+        env.ensure()
+        with call_lock(env.kept):
+            assert keepalive.server_status(env.kept).startswith("running")
 
 
 class TestStopFailures:

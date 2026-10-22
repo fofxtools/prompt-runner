@@ -1,9 +1,12 @@
 """Unit tests for src/utils.py"""
 
+from pathlib import Path
+
 from prompt_runner.utils import (
     generate_run_identifiers,
     merge_options,
     merged_server_args,
+    models_table,
     random_seed,
     sanitize_fs_name,
 )
@@ -186,3 +189,80 @@ class TestRandomSeed:
         seeds = {random_seed() for _ in range(50)}
         assert all(0 <= seed < 2**31 for seed in seeds)
         assert len(seeds) > 1
+
+
+FLAGS = ("-m", "--mmproj", "--diffusion-model", "--vae")
+
+
+class TestModelsTable:
+    def files(self, tmp_path: Path) -> dict[str, str]:
+        big, small = tmp_path / "big.gguf", tmp_path / "small.gguf"
+        big.write_bytes(b"x" * 3_000_000)
+        small.write_bytes(b"x" * 1_000_000)
+        return {"big": str(big), "small": str(small)}
+
+    def test_name_size_and_state_in_columns(self, tmp_path):
+        f = self.files(tmp_path)
+        models = [
+            {"name": "a", "server_args": {"-m": f["big"], "--mmproj": f["small"]}},
+            {"name": "longer-name", "server_args": {"--diffusion-model": f["small"]}},
+        ]
+        lines = models_table(models, {"longer-name"}, FLAGS).splitlines()
+        assert lines[0].split() == ["NAME", "SIZE", "STATE"]
+        assert lines[1].split() == [
+            "a",
+            "0.0",
+            "GB",
+        ]  # 4 MB, all files present, not running
+        assert lines[2].split() == ["longer-name", "0.0", "GB", "running"]
+        assert len({line.index("GB") for line in lines[1:]}) == 1  # aligned
+
+    def test_a_missing_file_makes_the_model_missing_even_if_it_is_running(
+        self, tmp_path
+    ):
+        f = self.files(tmp_path)
+        models = [
+            {"name": "a", "server_args": {"-m": f["big"], "--vae": "/nope.safetensors"}}
+        ]
+        assert (
+            models_table(models, {"a"}, FLAGS).splitlines()[1].split()[-1] == "missing"
+        )
+
+    def test_only_absolute_paths_count_as_files(self, tmp_path):
+        models = [
+            {
+                "name": "a",
+                "server_args": {"-c": 4096, "--flag": True, "--x": "relative.gguf"},
+            }
+        ]
+        assert models_table(models, set(), FLAGS).splitlines()[1].split() == ["a", "-"]
+
+    def test_a_folder_counts_as_present(self, tmp_path):
+        models = [{"name": "a", "server_args": {"--lora-model-dir": str(tmp_path)}}]
+        assert "missing" not in models_table(models, set(), FLAGS)
+
+    def test_a_vision_column_only_when_asked_for(self, tmp_path):
+        f = self.files(tmp_path)
+        models = [
+            {"name": "text", "server_args": {"-m": f["big"]}},
+            {"name": "seeing", "server_args": {"-m": f["big"], "--mmproj": f["small"]}},
+            {"name": "hf", "server_args": {"-hf": "org/repo"}},
+            {"name": "off", "server_args": {"-m": f["big"], "--mmproj": False}},
+        ]
+        plain = models_table(models, set(), FLAGS).splitlines()
+        assert plain[0].split() == ["NAME", "SIZE", "STATE"]
+        with_vision = models_table(
+            models, {"seeing"}, FLAGS, ("--mmproj", "-mm", "-hf")
+        ).splitlines()
+        assert with_vision[0].split() == ["NAME", "SIZE", "STATE", "VISION"]
+        cells = {line.split()[0]: line.split() for line in with_vision[1:]}
+        assert cells["text"] == ["text", "0.0", "GB"]
+        assert cells["seeing"] == ["seeing", "0.0", "GB", "running", "vision"]
+        assert (
+            cells["hf"][-1] == "vision" and cells["off"][-1] == "GB"
+        )  # false drops the flag
+        column = with_vision[0].index("VISION")
+        seeing_lines = [line for line in with_vision[1:] if line.endswith("vision")]
+        assert seeing_lines and all(
+            line.rindex("vision") == column for line in seeing_lines
+        )

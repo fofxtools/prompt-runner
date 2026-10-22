@@ -119,7 +119,7 @@ class _Run:
         self.open_server = open_server
         self.done = 0
         self.rows: list[dict[str, Any]] = []
-        self.server_log = ""  # of the group being run, relative to out_dir
+        self.server_log: str | None = ""  # of the group being run, relative to out_dir
 
     def rel(self, path: Path) -> str:
         """Path relative to out_dir, or as-is when it lies outside it."""
@@ -249,14 +249,17 @@ class _Run:
             / f"{self.run_dir_name}__{number}__{sanitize_fs_name(name)}.log"
         )
         self.server_log = self.rel(log_file)
-        print(f"Starting server: {name} ({len(group)} job(s))")
+        if (
+            self.open_server is None
+        ):  # a supplied server (kept, remote) is not started here
+            print(f"Starting server: {name} ({len(group)} job(s))")
 
         rest: list[Job] = []
         # SdCppServer is looked up here, not at import, so tests can patch it.
         open_server = self.open_server or SdCppServer
         try:
             with open_server(self.binary, args, log_file) as server:
-                self.server_log = self.rel(server.log_path)
+                self.server_log = self.rel(server.log_path) if server.log_path else None
                 for index, job in enumerate(group):
                     if self.run_job(server, job, args, index):
                         rest = group[index + 1 :]
@@ -274,13 +277,14 @@ class _Run:
 def run_jobs(
     jobs: list[Job],
     *,
-    binary: str,
+    binary: str = "",
     out_dir: Path,
     server_defaults: dict[str, Any] | None = None,
     generation_defaults: dict[str, Any] | None = None,
     skip_existing: bool = False,
     write_log: bool = True,
     open_server: Callable[[str, dict[str, Any], Path], SdCppServer] | None = None,
+    engine: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Generate the images of a list of jobs, one managed sd-server per distinct model setup.
@@ -297,7 +301,7 @@ def run_jobs(
 
     Args:
         jobs: The images to generate
-        binary: Path to the sd-server binary
+        binary: Path to the sd-server binary (not needed with `open_server` and `engine`)
         out_dir: Where runs.jsonl and server_logs/ go (job outputs can be anywhere)
         server_defaults: sd-server flags added to every model's server_args
         generation_defaults: Request fields under every model's generation_options
@@ -306,15 +310,19 @@ def run_jobs(
         open_server: Called as open_server(binary, server_args, log_path) to get the
             server for a group, used as a context manager (default: start a new
             SdCppServer, stopped when the group is done). A kept or attached server
-            can be returned here; its own `log_path` is what the log rows record.
+            can be returned here; its own `log_path` is what the log rows record (null for
+            a remote server, which has none).
+        engine: What the rows record as the engine (default: the first line of
+            `binary --version`); a caller whose server runs elsewhere gives its own
 
     Returns:
         The log rows of this run (jobs skipped for an existing file have none)
 
     Raises:
-        ValueError: If binary is empty or two jobs have the same output path
+        ValueError: If there is neither a binary nor an open_server, or two jobs have the
+            same output path
     """
-    if not binary:
+    if not binary and open_server is None:
         raise ValueError("binary (path to the sd-server binary) is required")
     outs = Counter(os.path.abspath(job.out) for job in jobs)
     duplicates = sorted(path for path, count in outs.items() if count > 1)
@@ -340,7 +348,7 @@ def run_jobs(
         run_id,
         run_dir_name,
         binary,
-        engine_version(binary),
+        engine if engine is not None else engine_version(binary),
         Path(out_dir),
         generation_defaults,
         write_log,

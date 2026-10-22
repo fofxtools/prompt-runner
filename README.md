@@ -1,127 +1,209 @@
 # prompt-runner
 
-**Under construction**
+Run prompts across local LLMs and image models, log every request, and compare the results. It starts and stops the
+[llama.cpp](https://github.com/ggml-org/llama.cpp) and [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+servers for you.
 
-Toolkit for running prompts across multiple LLM and image models and comparing the results.
+> **Status:** under construction. Running models needs Linux. A Windows VM can use the servers on the Linux host:
+> see [docs/windows-vm.md](docs/windows-vm.md).
 
-## Install
+## Quickstart
 
-```bash
-pip install -e .
-```
+On a Windows VM? Skip this. The VM does not run the models, so it does not need `llama_server` or `sd_server`: go to [docs/windows-vm.md](docs/windows-vm.md).
 
-LLM evaluation needs [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama` executable, and image generation a
-[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) `sd-server` build (see `docs/cuda-setup.md`).
+**You need:** Linux, Python 3.10+, an NVIDIA GPU, model files, and the server programs:
 
-## Usage
+- `llama` from llama.cpp, for LLMs.
+- `sd-server` from stable-diffusion.cpp, for images (build notes: [docs/cuda-setup.md](docs/cuda-setup.md)).
 
-### LLM evaluation
+1. Install:
 
-Each distinct model setup runs in its own `llama serve` ([llama.cpp](https://github.com/ggml-org/llama.cpp)), started and stopped for you. Set `llama_server` in
-`config/config.yaml` to the `llama` executable (a bare name is looked up on `PATH`):
+   ```bash
+   pip install -e .
+   ```
 
-```yaml
-llama_server: llama
-```
+2. In `config/config.yaml`, set `llama_server` and `sd_server` to the two programs (absolute paths).
+   Check that `config/llm_models.yaml` and `config/image_models.yaml` point at your model files.
 
-Model entries are in `config/llm_models.yaml` (the comments at its top describe the options): the `llama serve` flags of a model are its `server_args` (`-m`, `--mmproj`, ...), added to
-`llm_server_args` in `config.yaml`; request fields (`temperature`, `max_tokens`, `seed`, ...) are its `generation_options`, added to `llm_generation_defaults`. A prompt in `config/llm_prompts.yaml` has
-a `prompt` (sent as one user message) or `messages`, and optional `options` that win over the model's. For a vision model (one with an `--mmproj`), a `prompt` can have `images:` (a list of image file paths)
-and a user message in `messages` can have its own `images:`: they are sent before the text, and the log records the paths, not the images. PNG, JPEG, GIF, BMP and WebP work, TIFF does not;
-an image costs tokens by its size (about 1000 for a 1024-pixel square, about 4000 for 4096), which `--image-max-tokens` in the model's `server_args` can cap. Ollama's option names (`num_predict`, `num_ctx`, ...) are refused, because llama-server would ignore them.
+3. Check the setup. A model whose file is not found is marked `missing`:
 
-```python
-from prompt_runner.llm_runner import run_llm_eval
-from prompt_runner.config import load_config, load_llm_prompts, load_llm_models
+   ```bash
+   scripts/llm --list
+   scripts/genimg --list
+   ```
 
-config = load_config("config/config.yaml")
-prompts = load_llm_prompts("config/llm_prompts.yaml")
-models = load_llm_models("config/llm_models.yaml")
+4. Try it:
 
-run_llm_eval(config, prompts, models)
-# run_llm_eval(config, prompts, models, options={"temperature": 0.7})  # one value for every model
-```
+   ```bash
+   scripts/llm qwen3.5-4b "Say hello."
+   scripts/genimg "a red fox in the snow" -o fox.png
+   ```
 
-Every prompt runs on every model, one server per model. The results go to `<results_dir>/<run folder>/llm/`:
-`runs.jsonl` (one row per prompt and model: the request, the answer and the model's thinking in separate fields, the finish reason, token counts and speeds, the seed, the sampling in effect, the server flags and any error),
-`<prompt id>/<model>.md` (the answer) and `server_logs/`. A random seed is chosen for every chat that has none, and recorded. A reply that is cut at `max_tokens` has the finish reason `length`.
+The first call starts the model's server and leaves it loaded, so later calls are faster. Every call is logged, see [Logs](#logs).
 
-From Python, give `run_llm_jobs` an explicit list of `LlmJob`s, so you decide the matrix and the file names (the same idea as `run_jobs` for images).
-
-To share the GPU with a loaded sd-server, start the sd-server first (`genimg --start`) and raise `-fitt` for the LLM (about 6000, the MiB `--fit` leaves free; `llm_server_args` in `config.yaml`),
-so llama.cpp leaves room for the image server's peak.
-
-### One model at a time: `scripts/llm`
-
-A command like `ollama list` and `ollama run`, over the models in `config/llm_models.yaml`, with the same server flags and sampling as the runner:
+To unload the models:
 
 ```bash
-scripts/llm list                                # names, size on disk, and which model is loaded
-scripts/llm run qwen3.5-4b "Say hello."         # one reply
-echo "Why is the sky blue?" | scripts/llm run qwen3.5-4b > answer.md
-scripts/llm run mistral-nemo-12b                # a chat (/bye or Ctrl-D ends it; Ctrl-C stops the reply being written)
-scripts/llm run joycaption-beta-one --image fox.png "Describe this image."   # images go with the first message
-scripts/llm stop                                # unload the model
+scripts/llm --stop
+scripts/genimg --stop
 ```
 
-The answer goes to stdout and the model's thinking (dimmed) to stderr, so a redirected answer is only the answer. `--system TEXT` sets a system prompt. The model's `llama serve` stays loaded between calls, so the next call skips the load;
-a call for another model replaces it, and calls queue behind one another. It listens on port 8191 (or `$LLM_PORT`) and llm refuses to touch anything else that is listening there; `genimg`'s sd-server is separate (port 8190), so
-start it first when they share the GPU (see above). A chat keeps its history in the command, so it carries on even if another call unloaded the model meanwhile. Without a prompt, `llm run` reads the prompt from a pipe; with a prompt it
-never reads stdin (an open pipe that never ends would hang it). Linux only (it uses `/proc` and `fcntl`); `llama` must be on the `PATH`.
+### Optional: run `llm` and `genimg` from anywhere
 
-### Image generation
-
-Each distinct model setup runs in its own `sd-server`, started and stopped for you. Set `sd_server` in `config/config.yaml` to the absolute path of the binary (no `~`).
-
-```yaml
-sd_server: /home/shared/ai/stable-diffusion.cpp/build/bin/sd-server
-```
-
-Model entries are in `config/image_models.yaml` (the comments at its top describe the options).
-
-From the command line, prompts x seeds x models with a comparison sheet (sheets need `pip install -e ".[sheets]"`):
+Link the scripts into a folder on your `PATH`:
 
 ```bash
-python scripts/run_images.py config/image_prompts.yaml -o out/ --models flux-2-klein-4b-Q8_0,flux-2-klein-9b-Q4_K_M --seeds 1,2
+sudo ln -s "$PWD/scripts/llm" /usr/local/bin/llm
+sudo ln -s "$PWD/scripts/genimg" /usr/local/bin/genimg
 ```
 
-One image at a time, with `scripts/genimg` (the model is `--model`, or `default_image_model` in `config/config.yaml`; add `--ref` to edit):
+Without `sudo`, link them into `~/.local/bin` if that is on your `PATH`.
+
+The first line of each script, `#!/home/shared/ai/prompt-runner/.venv/bin/python`, is the Python of this project's virtual environment. If your clone is somewhere else, edit that line in both scripts.
+
+## What is in the box
+
+| You want to | Use | Details |
+|---|---|---|
+| Chat with a local LLM, or get one reply | `scripts/llm` | [llm](#llm-chat-with-a-local-model) |
+| Make one image, or edit one | `scripts/genimg` | [genimg](#genimg-make-one-image) |
+| Run every prompt on every LLM | `run_llm_eval`, `run_llm_jobs` | [Batch runs](docs/batch-runs.md#llms) |
+| Run prompts x seeds x models for images, with a comparison sheet | `scripts/run_images.py`, `run_jobs` | [Batch runs](docs/batch-runs.md#images) |
+| Use the servers from a Windows VM | `genimg`, `llm` with `GENIMG_URL` / `LLM_URL` | [docs/windows-vm.md](docs/windows-vm.md) |
+
+## Configuration
+
+Everything is in `config/`. The comments at the top of the model files describe every option.
+
+| File | What it holds |
+|---|---|
+| `config.yaml` | Paths of the two server programs, flags for every server, default models, `listen_host`, `results_dir` |
+| `llm_models.yaml` | One entry per LLM: `server_args` (`llama serve` flags: `-m`, `--mmproj`, ...) and `generation_options` (request fields: sampling, ...) |
+| `llm_prompts.yaml` | Prompts for batch runs: a `prompt` (one user message) or `messages`, optional `images` and `options` |
+| `image_models.yaml` | One entry per image model: `server_args` (sd-server flags) and `generation_options` |
+| `image_prompts.yaml` | Prompts for `scripts/run_images.py` |
+
+How settings combine, lowest priority first:
+
+1. `config.yaml` defaults (`llm_server_args`, `llm_generation_defaults`, `image_server_args`, `image_generation_defaults`).
+2. The model's own entry.
+3. The prompt's `options`, or the command line.
+
+Ollama's option names (`num_predict`, `num_ctx`, ...) are refused, because llama-server would ignore them without a word.
+
+## llm: chat with a local model
+
+```bash
+scripts/llm qwen3.5-4b "Say hello."                       # one reply
+echo "Why is the sky blue?" | scripts/llm qwen3.5-4b      # the prompt from a pipe
+scripts/llm mistral-nemo-12b                              # a chat
+scripts/llm joycaption-beta-one --image fox.png "Describe this image."
+scripts/llm qwen3.5-9b --reasoning off "What is 17 * 23?"
+```
+
+| Command or option | What it does |
+|---|---|
+| `llm MODEL "prompt"` | One reply. |
+| `llm MODEL` | A chat. `/bye` or Ctrl-D ends it; Ctrl-C stops the reply being written and drops that turn. |
+| `-o FILE` | Also write the answer to FILE (one reply only; an existing file is never overwritten). |
+| `--system TEXT` | A system prompt. |
+| `--image FILE` | Send an image with the first message; repeat for more. The model needs a vision projector: the `VISION` column of `--list` shows which models have one. PNG, JPEG, GIF, BMP and WebP work, TIFF does not. An image costs tokens by its size (about 1000 for a 1024-pixel square, about 4000 for 4096); `--image-max-tokens` in the model's `server_args` caps it. |
+| `--reasoning off` | Turn thinking off, and use the sampling the model's card gives for that mode. Models whose chat template has no switch ignore it. |
+| `--list` | The models: size on disk, which one is loaded, which have vision. |
+| `--start [MODEL]` | Load a model without chatting: MODEL, else the one already loaded, else `default_llm_model`. |
+| `--status` | Is the server running: model, pid, address, log. |
+| `--stop` | Unload the model. |
+
+Good to know:
+
+- The answer goes to stdout and the model's thinking (dimmed) to stderr, so `llm MODEL "..." > answer.md` keeps only the answer.
+- The model's `llama serve` stays loaded between calls, so the next call skips the load. A call for another model replaces it, and calls queue behind one another.
+- The server listens on port 8191 (or `$LLM_PORT`). If something else is listening there, `llm` refuses to touch it.
+- A chat keeps its history in the command, so it carries on even if the server was replaced between turns.
+- With a prompt on the command line, `llm` never reads stdin (a pipe that never ends would hang it).
+- If the reader of stdout goes away (`| head`), the reply stops quietly.
+- Needs Linux (it uses `/proc` and `fcntl`), unless it runs against a remote server: [docs/windows-vm.md](docs/windows-vm.md).
+
+## genimg: make one image
 
 ```bash
 scripts/genimg "a red fox in the snow" -o out/fox.png [--model NAME] [--seed N] [--size WxH]
-scripts/genimg "make the fox white" --ref out/fox.png -o out/fox_white.png
+scripts/genimg "make the fox white" --ref out/fox.png -o out/fox_white.png      # edit an image
 ```
 
-It goes through `run_jobs`, so the request, the settings and the log match the runner's. The `sd-server` stays loaded between calls, so
-the next call skips the model load (about 3 s): the first call starts it and prints its pid, a call that needs a different model replaces it,
-parallel calls queue, and if something else is listening on the port (8190, or `$GENIMG_PORT`) genimg refuses to touch it. `scripts/genimg --start [--model NAME]` loads it ahead of time with a throwaway 64x64 image (the model takes its GPU memory then, so use it
-before starting anything else that shares the GPU). Stop it with `scripts/genimg --stop` (or `kill PID`). This needs Linux (/proc, fcntl). Without `--model`, the model of the running server is used. The seed used is printed (`-1` or no `--seed` is random), an
-existing output file is never overwritten, and `runs.jsonl` goes to `<output folder>/.genimg/`. Run `scripts/genimg --help` for the rest.
+| Command or option | What it does |
+|---|---|
+| `genimg "prompt" -o FILE` | Make an image. An existing file is never overwritten. |
+| `--model NAME` | The model. Without it: the model of the running server, else `default_image_model`. |
+| `--seed N` | `-1` or no `--seed` is random. The seed used is printed. |
+| `--size WxH` | Overrides the size from the config. |
+| `--ref IMAGE` | A reference image to edit; repeat for more. |
+| `--lora NAME[:WEIGHT]` | Add a LoRA (a file name in the server's `--lora-model-dir`; weight 1.0 by default). |
+| `--list` | The models: size on disk, which one is loaded. |
+| `--start [--model NAME]` | Load the model now, using a throwaway 64x64 image. |
+| `--status` | Is the server running: model, pid, address, log; or whether something else holds the port. |
+| `--stop` | Unload the model (or `kill PID`). |
 
-From Python, give `run_jobs` an explicit list of jobs, so you decide the matrix and the file names:
+Run `scripts/genimg --help` for the rest.
 
-```python
-from pathlib import Path
-from prompt_runner.config import load_config, load_image_models
-from prompt_runner.image_runner import Job, run_jobs
+Good to know:
 
-config = load_config("config/config.yaml")
-model = {m["name"]: m for m in load_image_models("config/image_models.yaml")}["flux-2-klein-4b-Q8_0"]
-lora = [{"path": "klein_snofs_v1_4.safetensors", "multiplier": 1.0}]   # a request field: same server, no reload
-jobs = [
-    Job(model, {"prompt": "a red fox", "seed": 7, **extra}, Path("out") / f"fox__{name}.png", {"variant": name})
-    for name, extra in [("plain", {}), ("lora", {"lora": lora})]
-]
-rows = run_jobs(jobs, binary=config["sd_server"], out_dir=Path("out"),
-                server_defaults=config.get("image_server_args"),
-                generation_defaults=config.get("image_generation_defaults"), skip_existing=True)
-```
+- It goes through `run_jobs`, so the request, the settings and the log match the batch runner's.
+- The `sd-server` stays loaded between calls, so the next call skips the model load (about 3 s). The first call starts it and prints its pid. A call that needs a different model replaces it, and calls queue.
+- The server listens on port 8190 (or `$GENIMG_PORT`). If something else is listening there, `genimg` refuses to touch it.
+- `--start` makes the model take its GPU memory now: use it before starting anything else that shares the GPU.
+- Needs Linux (it uses `/proc` and `fcntl`), unless it runs against a remote server: [docs/windows-vm.md](docs/windows-vm.md).
 
-- `options` are native sd-server request fields (`prompt`, `seed`, `sample_params`, `lora`, `init_image`, ...), merged over the
-  model's `generation_options` and the config defaults. Image fields are file paths.
-- Output names must differ for every job (a duplicate is an error); put whatever varies in the name. `skip_existing` skips jobs
-  whose file exists, so a rerun resumes.
-- `out_dir/runs.jsonl` gets one line per image, flushed as it happens, failures and skipped jobs included (model, seed, the exact
-  request, server flags, sd.cpp version, time, your `tags`). Server output is in `out_dir/server_logs/`.
-- A failed job is recorded and the run continues; if a server dies, the rest of that model's jobs are recorded as skipped.
-- `prompt_runner.sheets.make_sheet` builds a labelled grid of thumbnails for comparing runs.
+## Batch runs
+
+To compare models, run many requests in one go. Each model's server is started once, every request is logged, and a failed job does not stop the run.
+
+- **LLMs:** `run_llm_eval(config, prompts, models)` runs every prompt on every model. `run_llm_jobs` lets you decide the matrix and the file names.
+- **Images:** `scripts/run_images.py` runs prompts x seeds x models and builds a comparison sheet. `run_jobs` lets you decide the matrix and the file names.
+
+See [docs/batch-runs.md](docs/batch-runs.md) for examples and options.
+
+## Logs
+
+Every request is logged as one line of `runs.jsonl`, flushed as it happens, failures and skipped jobs included.
+
+| Source | Where the log goes |
+|---|---|
+| `llm` | `storage/results/llm-cli/` of this repo; with `-o`, `.llm/` beside the file |
+| `genimg` | `.genimg/` beside the image |
+| `run_llm_eval` | `<results_dir>/<run folder>/llm/` |
+| `run_jobs` | `out_dir/` |
+
+A row has:
+
+- The exact request (messages or prompt, options) and the seed used.
+- The answer, with the model's thinking in a separate field.
+- The sampling in effect, finish reason, token counts and speeds, or the time taken for an image.
+- The server flags, the engine version, and any error.
+- Your own `tags`.
+
+A chat is one run with a row per turn. A reply cancelled with Ctrl-C is not logged. The servers' own output is in `/tmp/llm-<port>.log` and `/tmp/genimg-<port>.log`, and in `server_logs/` for batch runs.
+
+## Sharing one GPU
+
+To keep an LLM and the image server loaded together on one card:
+
+1. Start the image server first: `genimg --start`.
+2. Raise `-fitt` for the LLM (about 6000: the MiB that `--fit` leaves free) in `llm_server_args` in `config.yaml`, so llama.cpp leaves room for the image server's peak.
+
+## Servers and networks
+
+- The servers listen on the `listen_host` address in `config.yaml`: `127.0.0.1` (this computer only) if the key is missing, `0.0.0.0` (every address of this computer) in the shipped config.
+- The servers have no login. Use `0.0.0.0` only on a computer where no one else is on the network.
+- `GENIMG_HOST` and `LLM_HOST` override the key for one run.
+- A server keeps the address it was started with until a call that wants another one replaces it. After changing the key: `genimg --stop; genimg --start` and `llm --stop; llm --start`.
+- `genimg --status` and `llm --status` show the address.
+
+To use the servers from a virtual machine, which has no GPU, see [docs/windows-vm.md](docs/windows-vm.md).
+
+## More documentation
+
+- [docs/batch-runs.md](docs/batch-runs.md): batch runs from Python and `scripts/run_images.py`.
+- [docs/windows-vm.md](docs/windows-vm.md): using the servers from a Windows VM.
+- [docs/cuda-setup.md](docs/cuda-setup.md): building stable-diffusion.cpp.
+- [docs/development.md](docs/development.md): formatting, linting and tests.

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NoReturn
 
-from .server_process import ServerError, ServerProcess, http_error_text
+from .server_process import DEFAULT_HOST, ServerError, ServerProcess, http_error_text
 
 # Seconds a request may go without a single byte before the server counts as hung. The
 # server sends a comment line every 30 s while it works (--sse-ping-interval), so a
@@ -112,8 +112,25 @@ class LlamaServer(ServerProcess):
     STARTUP_TIMEOUT = 600.0
 
     @classmethod
-    def listen_argv(cls, argv: list[str], port: int) -> list[str]:
-        return [argv[0], "serve", *argv[1:], "--host", "127.0.0.1", "--port", str(port)]
+    def listen_argv(
+        cls, argv: list[str], port: int, host: str = DEFAULT_HOST
+    ) -> list[str]:
+        return [argv[0], "serve", *argv[1:], "--host", host, "--port", str(port)]
+
+    def loaded_file(self) -> str | None:
+        """
+        The model file the server says it serves, or None if it names none.
+
+        Raises:
+            OSError: If the server does not answer
+        """
+        path = self._http("GET", "/props").get("model_path")
+        return path if isinstance(path, str) and path else None
+
+    def build_info(self) -> str | None:
+        """The server's build, e.g. 'b11630-6868a52cb', or None. Raises OSError if it does not answer."""
+        info = self._http("GET", "/props").get("build_info")
+        return info if isinstance(info, str) and info else None
 
     def sampling_defaults(self) -> dict[str, Any]:
         """
@@ -210,10 +227,10 @@ class LlamaServer(ServerProcess):
         except urllib.error.HTTPError as e:
             raise ServerError("job_failed", http_error_text(e)) from e
         except TimeoutError as e:
+            stopped = " (server stopped)" if self.pid else ""
             self.stop()
             raise ServerError(
-                "server_died",
-                f"no output for {IDLE_TIMEOUT:.0f}s (server stopped)",
+                "server_died", f"no output for {IDLE_TIMEOUT:.0f}s{stopped}"
             ) from e
         except ValueError as e:
             raise ServerError(

@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,22 @@ def fake(binary: str, tmp_path: Path, **flags: Any) -> LlamaServer:
     """A server over the fake script; `flags` become `--name value` (mode="die" -> --mode die)."""
     args = {f"--{name}": value for name, value in flags.items()}
     return LlamaServer(binary, args, tmp_path / "llama.log")
+
+
+class TestListenAddress:
+    def test_the_host_flag_takes_the_address(self):
+        argv = LlamaServer.listen_argv(["llama"], 8191, "192.168.56.1")
+        assert argv[-4:] == ["--host", "192.168.56.1", "--port", "8191"]
+
+    def test_a_server_listens_only_on_its_address(self, fake_llama, tmp_path):
+        port = free_port()
+        with LlamaServer(
+            fake_llama, {}, tmp_path / "llama.log", port=port, host="127.0.0.2"
+        ) as server:
+            assert server.ready()
+            with pytest.raises(OSError):
+                socket.create_connection(("127.0.0.1", port), timeout=1)
+            assert LlamaServer.attach(port, tmp_path / "llama.log", "127.0.0.2").ready()
 
 
 class TestStarting:

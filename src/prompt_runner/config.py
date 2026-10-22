@@ -189,6 +189,8 @@ def load_llm_models(
       true gives a bare flag, false/null omits it
     - generation_options: (optional) dict of default request fields for this model
       (temperature, max_tokens, chat_template_kwargs, ...)
+    - no_thinking_options: (optional) dict of request fields that go over generation_options
+      when thinking is switched off (the sampling its authors recommend for that mode)
 
     Args:
         models_path: Path to the llm_models.yaml file (default: config/llm_models.yaml)
@@ -238,6 +240,13 @@ def load_llm_models(
         ):
             raise TypeError(
                 f"Model '{label}' field 'generation_options' must be a dictionary"
+            )
+
+        if "no_thinking_options" in model and not isinstance(
+            model["no_thinking_options"], dict
+        ):
+            raise TypeError(
+                f"Model '{label}' field 'no_thinking_options' must be a dictionary"
             )
 
     return models

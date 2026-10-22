@@ -1,6 +1,5 @@
 """Unit tests for src/prompt_runner/sheets.py"""
 
-import pytest
 from PIL import Image
 
 from prompt_runner.sheets import HEADER_HEIGHT, LABEL_WIDTH, TITLE_HEIGHT, make_sheet
@@ -33,20 +32,3 @@ def test_grid_size_and_missing_cell(tmp_path):
             225,
             225,
         )  # the missing cell
-
-
-def test_missing_pillow_gives_a_helpful_error(tmp_path, monkeypatch):
-    import builtins
-
-    real_import = builtins.__import__
-
-    def no_pil(name, *args, **kwargs):
-        if name == "PIL" or name.startswith("PIL."):
-            raise ImportError("no PIL")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", no_pil)
-    with pytest.raises(ImportError, match=r"prompt-runner\[sheets\]"):
-        make_sheet(
-            tmp_path / "s.png", "t", ["a"], ["r"], lambda r, c: tmp_path / "x.png"
-        )

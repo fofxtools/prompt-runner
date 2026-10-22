@@ -2,6 +2,7 @@
 
 import json
 import os
+import socket
 
 import pytest
 
@@ -113,6 +114,27 @@ class TestListenArgv:
             "--listen-port",
             "8190",
         ]
+
+
+class TestListenAddress:
+    def test_the_listen_flag_takes_the_address(self):
+        assert SdCppServer.listen_argv(["sd"], 8190, "192.168.56.1")[-4:] == [
+            "-l",
+            "192.168.56.1",
+            "--listen-port",
+            "8190",
+        ]
+
+    def test_a_server_listens_only_on_its_address(self, fake_binary, tmp_path):
+        port = free_port()
+        with SdCppServer(
+            fake_binary, {}, tmp_path / "m.log", port=port, host="127.0.0.2"
+        ) as server:
+            assert server.ready()
+            with pytest.raises(OSError):
+                socket.create_connection(("127.0.0.1", port), timeout=1)
+            assert SdCppServer.attach(port, tmp_path / "m.log", "127.0.0.2").ready()
+            assert not SdCppServer.attach(port, tmp_path / "m.log").ready()
 
 
 class TestKeptAndAttachedServers:

@@ -21,6 +21,11 @@ import base64, http.server, json, os, sys, time
 
 args = sys.argv
 port = int(args[args.index("--listen-port") + 1])
+host = args[args.index("-l") + 1] if "-l" in args else "127.0.0.1"
+model_path = None  # what capabilities reports, like the real server's launch echo
+for flag in ("--diffusion-model", "--model"):
+    if flag in args:
+        model_path = args[args.index(flag) + 1]
 mode = args[args.index("--mode") + 1] if "--mode" in args else "ok"
 record = args[args.index("--record") + 1] if "--record" in args else None
 delay = float(args[args.index("--delay") + 1]) if "--delay" in args else 0
@@ -48,7 +53,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.endswith("/capabilities"):
-            self.send(200, {{}})
+            model = {{"name": os.path.basename(model_path), "path": model_path}} if model_path else None
+            self.send(200, {{"model": model}} if model else {{}})
         elif mode == "die":
             os._exit(9)
         elif mode == "slow":
@@ -68,7 +74,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send(202, {{"id": "job_1"}})
 
 
-http.server.HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+http.server.HTTPServer((host, port), Handler).serve_forever()
 """
 
 
@@ -82,6 +88,8 @@ if args[1] == "--version":
     sys.exit(0)
 assert args[1] == "serve", args  # the real executable is `llama serve ...`
 port = int(args[args.index("--port") + 1])
+host = args[args.index("--host") + 1] if "--host" in args else "127.0.0.1"
+model_path = args[args.index("-m") + 1] if "-m" in args else None
 mode = args[args.index("--mode") + 1] if "--mode" in args else "think"
 record = args[args.index("--record") + 1] if "--record" in args else None
 delay = float(args[args.index("--delay") + 1]) if "--delay" in args else 0
@@ -110,7 +118,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/props":
             params = {"temperature": 0.8, "top_k": 40, "top_p": 0.95, "min_p": 0.05, "repeat_penalty": 1.0,
                       "presence_penalty": 0.0, "n_predict": -1}
-            self.send_json(200, {"default_generation_settings": {"params": params}})
+            props = {"default_generation_settings": {"params": params}, "build_info": "b1-fake"}
+            if model_path:
+                props["model_path"] = model_path
+            self.send_json(200, props)
         elif self.path != "/health":
             self.send_json(404, {})
         elif time.time() - started < delay:
@@ -164,7 +175,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b"0\r\n\r\n")
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+server = http.server.ThreadingHTTPServer((host, port), Handler)
 server.daemon_threads = True
 server.serve_forever()
 """

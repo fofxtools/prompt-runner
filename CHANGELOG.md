@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.3.1] - 2026-10-22
+
+You can now use `genimg` and `llm` from a Windows VM that has no GPU, `llm` logs every reply, and `llm` has a new command line (breaking).
+
+### Windows VM
+- `GENIMG_URL` and `LLM_URL` (for example `http://192.168.56.1:8190`) make the commands ask a server on another machine instead of starting their own. The model the server has loaded must be the one you asked for; if not, the error names both and the command to run on the host. `--status` and `--list` work, `--start` and `--stop` are refused.
+- Servers listen on the new `listen_host` in `config.yaml` (`0.0.0.0` in the shipped config, so `localhost` and a VM both work; `127.0.0.1` if the key is missing). `GENIMG_HOST` and `LLM_HOST` override it for one run.
+- New guide, `docs/windows-vm.md`, with the Windows wrappers `scripts/windows/genimg.cmd` and `llm.cmd` and a `scripts/windows/diagnostics.py` that shows what the VM can reach.
+- `genimg` and `llm` now import on Windows (`keepalive` no longer needs `fcntl`) and run with `python -m prompt_runner.genimg` / `.llm`.
+
+### llm
+- Breaking: the command line is now like `genimg`'s: `llm MODEL [PROMPT]`, `llm --list`, `llm --start`, `llm --status`, `llm --stop` (it was `llm run MODEL`, `llm list`, `llm stop`). Options can come before or after the prompt.
+- Every reply is logged to a `runs.jsonl`, like the runner's: in `storage/results/llm-cli/`, or in `.llm/` beside the file with `-o`. A chat logs one row per turn; a reply you cancel with Ctrl-C is not logged.
+- New: `-o FILE` also writes the answer to a file; `--reasoning off` turns thinking off; `--start [MODEL]` loads a model without chatting (default: `default_llm_model`, set to `qwen3.5-4b`); `--list` has a `VISION` column.
+- Piping into `head` (`llm MODEL "..." | head`) now stops the reply quietly instead of printing an error.
+
+### genimg
+- New `genimg --list` and `genimg --status` (the same for `llm`): the models and what is loaded, and whether the server is running or something else holds the port.
+- `-o` with a folder now says "is a folder; give a file name".
+
+### Models and config
+- New optional `no_thinking_options` in `llm_models.yaml`: sampling used whenever thinking is off. The Qwen3.5, 3.6 and 3.8 entries have their cards' non-thinking values, checked against the official cards.
+- `llama_server` is now an absolute path, like `sd_server`. A running `llm` server is replaced once by the next call, because the path is part of its command line.
+- Shorter, clearer comments in `config.yaml`.
+
+### Install and docs
+- Breaking: `pillow` is now a normal dependency and the `sheets` extra is gone, so `pip install -e .` is enough.
+- The README has a Quickstart and tables; the batch runs and the VM material moved to `docs/batch-runs.md` and `docs/windows-vm.md`.
+
+### For developers
+- `run_jobs` and `run_llm_jobs`: `binary` is optional when `open_server` is given, `engine=` sets the engine the rows record, and `run_llm_jobs` has `on_delta` and `say`; `LlmJob.out` is optional. The runners print "Starting server" only for a server they start themselves.
+- New `remote.py`, `request_options` (applies `no_thinking_options`), `models_table`, `SdCppServer.loaded_file()` and `LlamaServer.loaded_file()` / `build_info()`.
+
 ## [0.3.0] - 2026-10-21
 
 The LLM runner now uses llama.cpp instead of Ollama (breaking), and there is a new `llm` command. Image generation works as before.

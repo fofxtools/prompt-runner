@@ -1,42 +1,47 @@
-# Relative path recommended (keeps results inside the project)
+# Where results go; a relative path stays inside the project
 results_dir: storage/results/
 
 # Absolute path to the stable-diffusion.cpp sd-server binary (no ~)
 sd_server: /home/shared/ai/stable-diffusion.cpp/build/bin/sd-server
 
-# Absolute path to the llama.cpp `llama` executable (`llama serve` is run). A bare name is looked up on PATH.
-llama_server: llama
+# Absolute path to the llama.cpp `llama` executable (`llama serve` is run)
+llama_server: /home/shared/.local/bin/llama
 
-# `llama serve` flags added to every model's server_args (a model's own value wins).
-# -c: the context size, set so runs do not depend on what --fit would pick for the model's own maximum.
-# -fitt: MiB of GPU memory --fit leaves free (2500 for an LLM alone; about 6000 to share the card with a loaded sd-server).
-# -np 1: one slot, so the whole context belongs to the one chat that runs.
+# `llama serve` flags for every LLM; a model's own server_args win.
+# -c: context size, fixed so it does not depend on what --fit picks.
+# -fitt: MiB of GPU memory left free; about 6000 to share the card with a loaded sd-server.
+# -np 1: one slot, so the whole context belongs to the running chat.
 llm_server_args:
   -c: 32768
   -fitt: 2500
   -np: 1
 
-# Request fields (OpenAI names) merged under every model's generation_options and each prompt's options.
-# No sampling here on purpose: llm_models.yaml has each model's recommended sampling, and a model without one gets
-# llama.cpp's own defaults (the results record what was used). A value set here is only a default: a model's own
-# generation_options and a prompt's options win over it. To compare all models at one value, pass it as run_llm_eval(..., options={...}).
-# max_tokens caps a reply (-1: no limit); a reply that fills the context also ends as a normal stop, so a limit
-# saves a runaway one. seed -1 is random: the seed used is recorded.
+# Request fields for every LLM chat; a model's generation_options and a prompt's options win.
+# Sampling is not set here: each model in llm_models.yaml has its own.
+# max_tokens -1 means no limit; seed -1 is random (the seed used is recorded).
 llm_generation_defaults:
   max_tokens: 16384
   seed: -1
 
-# sd-server flags added to every model's server_args (a model's own value wins).
+# sd-server flags for every image model; a model's own server_args win.
 # --sage-attn needs an NVIDIA GPU with compute capability 8.0+ (RTX 30xx and up); remove it on older GPUs.
 image_server_args:
   --lora-model-dir: /home/shared/ai/lora
   --sage-attn: true
 
-# Native sd-server request fields merged under every model's generation_options
+# sd-server request fields for every image; a model's generation_options win.
 image_generation_defaults:
   width: 1024
   height: 1024
   seed: -1
 
-# The model genimg uses when --model is not given
+# genimg's default model, used when no --model is given and no server is running
 default_image_model: flux-2-klein-9b-Q4_K_M
+
+# llm --start's default model, used when no MODEL is given and no server is running
+default_llm_model: qwen3.5-4b
+
+# The address the servers listen on. 127.0.0.1: this computer only. 0.0.0.0: every address of
+# this computer, so a VM can reach them too; they have no login, so use it only where no one else
+# is on the network. $GENIMG_HOST and $LLM_HOST override it for one run. See docs/windows-vm.md.
+listen_host: 0.0.0.0

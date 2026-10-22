@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from prompt_runner.genimg import main
 from prompt_runner.image_runner import Job, run_jobs
 from prompt_runner.keepalive import KeepAliveError
 from prompt_runner.sdcpp_server import SdCppServer
-from prompt_runner.server_process import ServerError
+from prompt_runner.server_process import ServerError, free_port
 
 REPO = Path(__file__).resolve().parent.parent
 BASE_LORA = {"path": "base.safetensors", "multiplier": 0.5}
@@ -424,6 +425,122 @@ class TestStart:
         assert "unknown model 'model-x'" in capsys.readouterr().err
 
 
+class TestStatus:
+    def test_says_what_the_kept_server_is_doing(self, repo, tmp_path, capsys):
+        with patch("prompt_runner.keepalive.server_status", return_value="running x"):
+            code = main(["--status"], repo_root=repo, state_dir=tmp_path / "state")
+        assert code == 0
+        assert capsys.readouterr().out == "running x\n"
+
+    def test_with_nothing_running(self, repo, tmp_path, capsys):
+        port = free_port()
+        with patch.dict(os.environ, {"GENIMG_PORT": str(port)}):
+            code = main(["--status"], repo_root=repo, state_dir=tmp_path / "state")
+        assert code == 0
+        assert f"not running (127.0.0.1:{port} is free)" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--status", "a prompt"],
+            ["--status", "-o", "x.png"],
+            ["--status", "--model", "model-a"],
+            ["--status", "--seed", "3"],
+            ["--status", "--lora", "x"],
+            ["--status", "--start"],
+            ["--status", "--stop"],
+        ],
+    )
+    def test_takes_nothing_else(self, repo, tmp_path, args):
+        with pytest.raises(SystemExit) as e:
+            main(args, repo_root=repo, state_dir=tmp_path / "state")
+        assert e.value.code == 2
+
+
+class TestListenHostConfig:
+    def hosts(self, kept: Kept) -> list[str]:
+        return [entry["paths"].host for entry in kept.ensured]
+
+    def test_the_server_is_kept_on_the_configured_address(
+        self, tmp_path, kept, monkeypatch
+    ):
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        repo = write_repo(tmp_path / "repo", listen_host="0.0.0.0")
+        assert run(repo, tmp_path)[0] == 0
+        assert self.hosts(kept) == ["0.0.0.0"]
+
+    def test_without_the_key_it_is_loopback(self, repo, tmp_path, kept, monkeypatch):
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        run(repo, tmp_path)
+        assert self.hosts(kept) == ["127.0.0.1"]
+
+    def test_the_variable_wins(self, tmp_path, kept, monkeypatch):
+        monkeypatch.setenv("GENIMG_HOST", "127.0.0.2")
+        repo = write_repo(tmp_path / "repo", listen_host="0.0.0.0")
+        run(repo, tmp_path)
+        assert self.hosts(kept) == ["127.0.0.2"]
+
+    def test_a_bad_value_in_the_config_is_an_error(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.delenv("GENIMG_HOST", raising=False)
+        repo = write_repo(tmp_path / "repo", listen_host="localhost")
+        assert run(repo, tmp_path)[0] == 1
+        assert "listen_host in config/config.yaml must be an IPv4 address" in (
+            capsys.readouterr().err
+        )
+
+
+class TestList:
+    def test_lists_every_model_with_its_size_and_the_loaded_one(
+        self, repo, tmp_path, capsys, kept
+    ):
+        a, b = tmp_path / "a.gguf", tmp_path / "b.gguf"
+        a.write_bytes(b"x" * 2_000_000)
+        models = yaml.safe_load((repo / "config/image_models.yaml").read_text())
+        models[0]["server_args"]["--diffusion-model"] = str(a)
+        models[1]["server_args"]["--diffusion-model"] = str(b)  # not on disk
+        (repo / "config/image_models.yaml").write_text(yaml.safe_dump(models))
+        kept.running = "model-a"
+
+        assert main(["--list"], repo_root=repo, state_dir=tmp_path / "state") == 0
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0].split() == ["NAME", "SIZE", "STATE"]
+        assert lines[1].split() == ["model-a", "0.0", "GB", "running"]
+        assert lines[2].split()[-1] == "missing"
+        assert FakeServer.instances == []  # nothing was started
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--list", "a prompt"],
+            ["--list", "-o", "x.png"],
+            ["--list", "--model", "model-a"],
+            ["--list", "--seed", "3"],
+            ["--list", "--ref", "x.png"],
+            ["--list", "--status"],
+            ["--list", "--start"],
+        ],
+    )
+    def test_takes_nothing_else(self, repo, tmp_path, args):
+        with pytest.raises(SystemExit) as e:
+            main(args, repo_root=repo, state_dir=tmp_path / "state")
+        assert e.value.code == 2
+
+
+class TestHost:
+    def test_anything_but_an_ipv4_address_is_an_error(
+        self, repo, tmp_path, capsys, monkeypatch
+    ):
+        monkeypatch.setenv("GENIMG_HOST", "localhost")
+        for args in (
+            ["--status"],
+            ["--stop"],
+            ["a prompt", "-o", str(tmp_path / "a.png")],
+        ):
+            assert main(args, repo_root=repo, state_dir=tmp_path / "state") == 1
+            assert "GENIMG_HOST must be an IPv4 address" in capsys.readouterr().err
+
+
 class TestStop:
     def test_stops_a_running_server(self, repo, tmp_path, capsys, kept):
         kept.running = "model-a"
@@ -490,6 +607,19 @@ class TestLora:
 
 
 class TestErrors:
+    def test_a_folder_as_output_says_so(self, repo, tmp_path, capsys):
+        folder = tmp_path / "images"
+        folder.mkdir()
+        code = main(
+            ["a red apple", "-o", str(folder)],
+            repo_root=repo,
+            state_dir=tmp_path / "state",
+        )
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "is a folder; give a file name" in err and "image.png" in err
+        assert FakeServer.instances == []
+
     def test_existing_output_is_never_overwritten(self, repo, tmp_path, capsys):
         out = tmp_path / "images" / "out.png"
         out.parent.mkdir()

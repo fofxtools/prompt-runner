@@ -15,6 +15,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, TypeVar
 
+DEFAULT_HOST = "127.0.0.1"  # the address a server listens on unless told otherwise
 POLL_INTERVAL = 0.5
 STOP_TIMEOUT = 5.0  # seconds between SIGTERM and SIGKILL
 
@@ -80,7 +81,7 @@ class ServerProcess:
 
     A subclass sets `NAME` (for messages) and `READY_PATH` (a GET that answers 200 once the
     server is ready), and implements `listen_argv`. By default the server listens on a
-    free port on 127.0.0.1 and runs in its own process group so that the whole tree is
+    free port on 127.0.0.1 (or on `host`) and runs in its own process group so that the whole tree is
     stopped on exit, whatever happens. With `keep=True` it is left running on exit (see
     keepalive.py), and `attach()` wraps a server that is already running.
     """
@@ -95,30 +96,41 @@ class ServerProcess:
         self,
         binary: str,
         args: dict[str, Any],
-        log_path: Path,
+        log_path: Path | None,
         port: int | None = None,
         keep: bool = False,
+        host: str = DEFAULT_HOST,
     ) -> None:
         self.argv = build_argv(binary, args)
         self.log_path = log_path
         self._port = port
+        self._host = host
         self._keep = keep
         self._proc: subprocess.Popen[bytes] | None = None
         self._base_url = ""
 
     @classmethod
-    def listen_argv(cls, argv: list[str], port: int) -> list[str]:
-        """Append the flags that make the server listen on 127.0.0.1:`port`."""
+    def listen_argv(
+        cls, argv: list[str], port: int, host: str = DEFAULT_HOST
+    ) -> list[str]:
+        """Append the flags that make the server listen on `host`:`port`."""
         raise NotImplementedError
 
     @classmethod
     def attach(  # noqa: PYI019 (typing.Self needs 3.11)
-        cls: type[S], port: int, log_path: Path
+        cls: type[S],
+        port: int,
+        log_path: Path | None = None,
+        host: str = DEFAULT_HOST,
     ) -> S:
-        """Wrap a server that is already running on `port`; this object never stops it."""
-        server = cls("", {}, log_path, port=port, keep=True)
+        """
+        Wrap a server that is already running on `host`:`port`; this object never stops it.
+
+        `log_path` is the server's log if it is on this machine, None for a remote server.
+        """
+        server = cls("", {}, log_path, port=port, keep=True, host=host)
         server.argv = []
-        server._base_url = f"http://127.0.0.1:{port}"
+        server._base_url = f"http://{host}:{port}"
         return server
 
     @property
@@ -152,9 +164,11 @@ class ServerProcess:
 
     def spawn(self) -> None:
         """Start the process (own session, no stdin, output to the log) without waiting for it."""
+        if self.log_path is None:
+            raise ValueError("a server needs a log file to be started")
         port = self._port or free_port()
-        self._base_url = f"http://127.0.0.1:{port}"
-        self.argv = self.listen_argv(self.argv, port)
+        self._base_url = f"http://{self._host}:{port}"
+        self.argv = self.listen_argv(self.argv, port, self._host)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.log_path, "wb") as log:
             self._proc = subprocess.Popen(

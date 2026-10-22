@@ -6,6 +6,7 @@ import urllib.error
 from typing import Any
 
 from .server_process import (
+    DEFAULT_HOST,
     POLL_INTERVAL,
     ServerError,
     ServerProcess,
@@ -27,8 +28,24 @@ class SdCppServer(ServerProcess):
     READY_PATH = "/sdcpp/v1/capabilities"
 
     @classmethod
-    def listen_argv(cls, argv: list[str], port: int) -> list[str]:
-        return [*argv, "-l", "127.0.0.1", "--listen-port", str(port)]
+    def listen_argv(
+        cls, argv: list[str], port: int, host: str = DEFAULT_HOST
+    ) -> list[str]:
+        return [*argv, "-l", host, "--listen-port", str(port)]
+
+    def loaded_file(self) -> str | None:
+        """
+        The model file the server says it serves, or None if it names none.
+
+        It is the file given on the command line, reported before the lazy load, so asking costs the
+        GPU nothing. Works for `--diffusion-model` and `--model` alike.
+
+        Raises:
+            OSError: If the server does not answer
+        """
+        model = self._http("GET", self.READY_PATH).get("model")
+        path = model.get("path") if isinstance(model, dict) else None
+        return path if isinstance(path, str) and path else None
 
     def generate(self, request: dict[str, Any]) -> list[bytes]:
         """
@@ -64,9 +81,10 @@ class SdCppServer(ServerProcess):
                 error = status.get("error") or {}
                 raise ServerError("job_failed", error.get("message") or f"job {state}")
             if time.monotonic() > deadline:
+                stopped = " (server stopped)" if self.pid else ""
                 self.stop()
                 raise ServerError(
                     "server_died",
-                    f"request timed out after {REQUEST_TIMEOUT:.0f}s (server stopped)",
+                    f"request timed out after {REQUEST_TIMEOUT:.0f}s{stopped}",
                 )
             time.sleep(POLL_INTERVAL)

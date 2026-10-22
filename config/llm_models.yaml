@@ -14,10 +14,14 @@
 #     llama.cpp's own defaults apply (or the ones its GGUF carries) and the results record what was used (`sampling`).
 #   - Other fields: max_tokens (-1: no limit), seed, chat_template_kwargs, reasoning_effort, ...
 #   - Card names become llama.cpp's: repetition_penalty is repeat_penalty.
-#   - The Qwen cards give one set for thinking mode (the default) and another for non-thinking; these entries use the
-#     thinking-mode one for general tasks. Thinking is switched off with chat_template_kwargs: {enable_thinking: false}
-#     (or reasoning_effort: none) and capped with the server flag `--reasoning-budget: 1500`. For the Qwens the
-#     non-thinking set is temperature 0.7, top_p 0.8, top_k 20, min_p 0, presence_penalty 1.5.
+#   - The Qwen cards give one set for thinking mode (the default) and another for non-thinking; generation_options holds
+#     the thinking-mode one for general tasks. Thinking is switched off with chat_template_kwargs: {enable_thinking: false}
+#     (`llm MODEL --reasoning off` does it) and capped with the server flag `--reasoning-budget: 1500`.
+#   - no_thinking_options (optional): request fields that go over generation_options whenever thinking is switched off
+#     (by the entry, the defaults or the request), so that mode gets its own sampling; a request's own options still win.
+#     For the Qwens it is the card's non-thinking set for general tasks: temperature 0.7, top_p 0.8, top_k 20, min_p 0,
+#     presence_penalty 1.5 (Qwen3.8 thinks with presence_penalty 0, so it lists that one too). Gemma's card gives one set
+#     for both modes, so its entries have none. Checked against the Qwen cards on 2026-10-22.
 #   - Models that think put it in `reasoning` in the results. Near-greedy sampling (temperature 0.2) made Qwen3.5-4B
 #     loop in its thinking until max_tokens ran out ("Write a modern version of Little Red Riding Hood" repeated one line
 #     510 times); more tokens do not help, the card's sampling does.
@@ -110,6 +114,9 @@
     min_p: 0.0
     presence_penalty: 1.5
     repeat_penalty: 1.0
+  no_thinking_options:
+    temperature: 0.7
+    top_p: 0.8
 
 # Qwen3.5 9B, HauhauCS "Aggressive" uncensored build, with vision. Q4_K_M, 5.6 GB.
 # Sampling: Qwen's card, thinking mode for general tasks. The HauhauCS card lists 0.6 / top_p 0.95 / top_k 20 / min_p 0
@@ -127,6 +134,9 @@
     min_p: 0.0
     presence_penalty: 1.5
     repeat_penalty: 1.0
+  no_thinking_options:
+    temperature: 0.7
+    top_p: 0.8
 
 # Gemma 4 E4B, HauhauCS "Aggressive" uncensored build, with vision. Q6_K_P, 6.3 GB.
 # Sampling: Google's card, all use cases (the HauhauCS card gives the same, and the GGUF has it too).
@@ -187,6 +197,9 @@
     min_p: 0.0
     presence_penalty: 1.5
     repeat_penalty: 1.0
+  no_thinking_options:
+    temperature: 0.7
+    top_p: 0.8
 
 # Qwen3.8 27B (dense), OrcaRouter uncensored build, with vision. Q4_K_M, 16.8 GB: does not fit 16 GB with the context.
 # Sampling: the OrcaRouter card gives none; Qwen's Qwen3.8-27B card, thinking mode.
@@ -202,6 +215,10 @@
     min_p: 0.0
     presence_penalty: 0.0
     repeat_penalty: 1.0
+  no_thinking_options:
+    temperature: 0.7
+    top_p: 0.8
+    presence_penalty: 1.5
 
 # Qwen3.8 27B (dense), HauhauCS "Aggressive" uncensored build, with vision. Q4_K_P, 17.9 GB: does not fit 16 GB with the context.
 # Sampling: Qwen's Qwen3.8-27B card, thinking mode (the HauhauCS card gives the same).
@@ -217,3 +234,7 @@
     min_p: 0.0
     presence_penalty: 0.0
     repeat_penalty: 1.0
+  no_thinking_options:
+    temperature: 0.7
+    top_p: 0.8
+    presence_penalty: 1.5
