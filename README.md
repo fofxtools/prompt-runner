@@ -128,12 +128,14 @@ Good to know:
 
 ```bash
 scripts/genimg "a red fox in the snow" -o out/fox.png [--model NAME] [--seed N] [--size WxH]
+scripts/genimg "a red fox in the snow"     # named for you in the current folder
 scripts/genimg "make the fox white" --ref out/fox.png -o out/fox_white.png      # edit an image
 ```
 
 | Command or option | What it does |
 |---|---|
 | `genimg "prompt" -o FILE` | Make an image. An existing file is never overwritten. |
+| `genimg "prompt"`, `-o FOLDER/` | Without `-o`, or with `-o` a folder, the file is named `<date>-<time>_<first prompt words>_<model>_s<seed>.png`, in the current folder or FOLDER. `-2`, `-3` and so on are added if the name is taken. |
 | `--model NAME` | The model. Without it: the model of the running server, else `default_image_model`. |
 | `--seed N` | `-1` or no `--seed` is random. The seed used is printed. |
 | `--size WxH` | Overrides the size from the config. |

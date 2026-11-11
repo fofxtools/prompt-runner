@@ -6,6 +6,8 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -16,7 +18,13 @@ from .config import load_config, load_image_models
 from .image_runner import Job, prepare_request, run_jobs
 from .sdcpp_server import SdCppServer
 from .server_process import ServerError
-from .utils import merge_options, merged_server_args, models_table
+from .utils import (
+    merge_options,
+    merged_server_args,
+    models_table,
+    random_seed,
+    sanitize_fs_name,
+)
 
 DESCRIPTION = """\
 Generate an image, or edit one with --ref (the prompt then describes the edit), using a model from
@@ -34,9 +42,12 @@ port (8190, or $GENIMG_PORT) of the listen_host address of config.yaml (127.0.0.
 Model: --model, else the model the running server was last used for, else `default_image_model` in
 config/config.yaml. Size, steps, CFG and the other request fields come from config/config.yaml and the model's
 entry; --size overrides the size. -1 (the default) means a random seed; the seed used is printed. --lora adds to
-the LoRAs the model entry already lists (file names in the server's --lora-model-dir).
+the LoRAs the model entry already lists (file names in the server's --lora-model-dir). The server's web UI
+(http://HOST:PORT/) starts with the same size, seed, sampler, steps and CFG as its defaults; pick LoRAs there yourself.
 
-The PNG is written to OUT; an existing file is never overwritten. runs.jsonl goes to <output folder>/.genimg/.
+The PNG is written to the -o file. Without -o, or with -o FOLDER/, genimg names it <date>-<time>_<first prompt words>_<model>_s<seed>.png
+in the current folder (or FOLDER), adding -2, -3, ... if that name is taken. An existing file is never overwritten.
+runs.jsonl goes to <output folder>/.genimg/.
 
 Remote: with GENIMG_URL=http://HOST:PORT the command only asks a server on another machine (for a VM without a GPU): it never
 starts, stops or locks anything, and the model must be the one the server has loaded. See docs/windows-vm.md.
@@ -57,6 +68,20 @@ FILE_FLAGS = (
     "--llm_vision",
 )
 DEFAULT_PORT = 8190
+# Request fields (paths into the merged generation options) and the sd-server flags that make the same value
+# the default of the server's web UI. genimg's own requests send these fields anyway. LoRAs have no flag.
+UI_DEFAULT_FLAGS = (
+    (("width",), "--width"),
+    (("height",), "--height"),
+    (("seed",), "--seed"),
+    (("sample_params", "sample_method"), "--sampling-method"),
+    (("sample_params", "scheduler"), "--scheduler"),
+    (("sample_params", "sample_steps"), "--steps"),
+    (("sample_params", "custom_sigmas"), "--sigmas"),
+    (("sample_params", "flow_shift"), "--flow-shift"),
+    (("sample_params", "guidance", "txt_cfg"), "--cfg-scale"),
+    (("sample_params", "guidance", "distilled_guidance"), "--guidance"),
+)
 
 
 class GenimgError(Exception):
@@ -95,7 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("prompt", nargs="?")
-    ap.add_argument("-o", "--output", help="PNG file to write (required)")
+    ap.add_argument(
+        "-o",
+        "--output",
+        help="PNG file to write, or a folder to name it in (default: named in the current folder)",
+    )
     ap.add_argument(
         "--start",
         action="store_true",
@@ -164,9 +193,15 @@ def _job_options(
     args: argparse.Namespace, model: dict[str, Any], config: dict[str, Any]
 ) -> dict[str, Any]:
     """Request fields for this image; everything else comes from the runner's merge."""
-    options: dict[str, Any] = {"prompt": args.prompt}
-    if args.seed is not None:
-        options["seed"] = args.seed
+    base = merge_options(
+        config.get("image_generation_defaults"), model.get("generation_options")
+    )
+    # Resolved here as the runner would (-1 or unset: random), so an automatic file name can carry it.
+    seed = args.seed if args.seed is not None else base.get("seed")
+    options: dict[str, Any] = {
+        "prompt": args.prompt,
+        "seed": random_seed() if seed in (None, -1) else seed,
+    }
     if args.size:
         options["width"], options["height"] = args.size
     if args.ref:
@@ -174,11 +209,70 @@ def _job_options(
         options["ref_images"] = [str(Path(ref).resolve()) for ref in args.ref]
     if args.lora:
         # Lists are replaced when options are merged, so start from the model's own LoRAs.
-        base = merge_options(
-            config.get("image_generation_defaults"), model.get("generation_options")
-        )
         options["lora"] = [*base.get("lora", []), *args.lora]
     return options
+
+
+def _slug(prompt: str, words: int = 15, limit: int = 100) -> str:
+    """
+    A file-name-safe stand-in for the prompt: its first words in lowercase ASCII, joined by hyphens.
+
+    Examples:
+        >>> _slug("Make her dress GREEN, please!")
+        'make-her-dress-green-please'
+        >>> _slug("Café crème brûlée")
+        'cafe-creme-brulee'
+        >>> _slug("日本の猫")
+        'image'
+    """
+    text = unicodedata.normalize("NFKD", prompt).encode("ascii", "ignore").decode()
+    slug = "-".join(re.findall(r"[a-z0-9]+", text.lower())[:words])
+    return slug[:limit].strip("-") or "image"
+
+
+def _auto_output(folder: Path, prompt: str, model_name: str, seed: int) -> Path:
+    """A new file in `folder`: <date>-<time>_<slug>_<model>_s<seed>.png, with -2, -3, ... if taken."""
+    stem = (
+        f"{datetime.now():%Y%m%d-%H%M%S}_{_slug(prompt)}_"
+        f"{sanitize_fs_name(model_name)}_s{seed}"
+    )
+    out, n = folder / f"{stem}.png", 2
+    while out.exists():
+        out, n = folder / f"{stem}-{n}.png", n + 1
+    return out
+
+
+def _kept_server_args(
+    server_args: dict[str, Any], model: dict[str, Any], config: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    The kept server's flags: `server_args` plus the model's generation options as the web UI's defaults.
+
+    A flag already in `server_args` wins. `--start` and image calls must build the same flags, or an image
+    call would replace the server that --start loaded.
+    """
+    options = merge_options(
+        config.get("image_generation_defaults"), model.get("generation_options")
+    )
+    args = dict(server_args)
+    for path, flag in UI_DEFAULT_FLAGS:
+        value: Any = options
+        for key in path:
+            value = value.get(key) if isinstance(value, dict) else None
+        if value is None or flag in args:
+            continue
+        args[flag] = (
+            ",".join(str(v) for v in value) if isinstance(value, list) else value
+        )
+    # Sampling takes its step count from the sigmas, but the web UI shows --steps (20 if unset).
+    sigmas = options.get("sample_params", {}).get("custom_sigmas")
+    if (
+        sigmas
+        and "--steps" not in args
+        and args.get("--sigmas") == ",".join(str(v) for v in sigmas)
+    ):
+        args["--steps"] = len(sigmas) - 1
+    return args
 
 
 def _port() -> int:
@@ -263,7 +357,11 @@ def _start(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) ->
             server, started = keepalive.ensure_server(
                 kept,
                 config["sd_server"],
-                merged_server_args(config.get("image_server_args"), model),
+                _kept_server_args(
+                    merged_server_args(config.get("image_server_args"), model),
+                    model,
+                    config,
+                ),
                 model_name=model["name"],
             )
             server.generate(prepare_request(warm_up)[0])
@@ -282,20 +380,24 @@ def _start(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) ->
 def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None) -> str:
     """Run one job on the kept server; return the success line."""
     config, models = _load(repo_root)
-    out = _check_output(args)
+    folder, out = _check_output(args)
 
     keepalive.check_supported(TOOL)
     kept = keepalive.kept_server(
         TOOL, SdCppServer, _port(), state_dir, keepalive.listen_host(TOOL, config)
     )
-    out_dir = out.resolve().parent / ".genimg"
+    out_dir = folder.resolve() / ".genimg"
     with keepalive.call_lock(kept):
         # Checked again: another call may have written this file while we waited for the lock.
-        if out.exists():
+        if out is not None and out.exists():
             raise GenimgError(f"{out} already exists; choose another name")
         running = None if args.model else keepalive.running_model(kept)
         model = _pick_model(models, args.model or running, config, running is not None)
-        job = Job(model, _job_options(args, model, config), out)
+        options = _job_options(args, model, config)
+        # Named under the lock, so two calls cannot pick the same free name.
+        if out is None:
+            out = _auto_output(folder, args.prompt, model["name"], options["seed"])
+        job = Job(model, options, out)
         started = False
 
         def open_server(
@@ -303,7 +405,10 @@ def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None)
         ) -> SdCppServer:
             nonlocal started
             server, started = keepalive.ensure_server(
-                kept, binary, server_args, model_name=model["name"]
+                kept,
+                binary,
+                _kept_server_args(server_args, model, config),
+                model_name=model["name"],
             )
             job.tags["server"] = "started" if started else "warm"
             return server
@@ -332,27 +437,32 @@ def _generate(args: argparse.Namespace, repo_root: Path, state_dir: Path | None)
             except keepalive.KeepAliveError as e:
                 stop_problem = f"; {e}"
 
-    return _result(row, args, model, f"server log: {kept.log}", stop_problem)
+    return _result(row, out, model, f"server log: {kept.log}", stop_problem)
 
 
-def _check_output(args: argparse.Namespace) -> Path:
-    """The -o file, after checking that it can be written and that the --ref images exist."""
-    out = Path(args.output)
-    if out.is_dir():
-        raise GenimgError(
-            f"{out} is a folder; give a file name, e.g. -o {out / 'image.png'}"
-        )
-    if out.exists():
-        raise GenimgError(f"{out} already exists; choose another name")
+def _check_output(args: argparse.Namespace) -> tuple[Path, Path | None]:
+    """
+    Where the image goes, after checking that the --ref images exist: (folder, file).
+
+    The file is the -o file (which must not exist yet), or None when genimg names it (no -o, or -o an existing
+    folder or a path ending in a slash): the name needs the model and seed, so it is chosen later.
+    """
     for ref in args.ref:
         if not Path(ref).is_file():
             raise GenimgError(f"reference image not found: {ref}")
-    return out
+    if not args.output:
+        return Path(), None
+    out = Path(args.output)
+    if out.is_dir() or args.output.endswith(("/", os.sep)):
+        return out, None
+    if out.exists():
+        raise GenimgError(f"{out} already exists; choose another name")
+    return out.parent, out
 
 
 def _result(
     row: dict[str, Any],
-    args: argparse.Namespace,
+    out: Path,
     model: dict[str, Any],
     where: str,
     problem: str = "",
@@ -367,7 +477,7 @@ def _result(
     parts = [f"seed {row['seed']}", f"model {model['name']}"]
     if request.get("width") and request.get("height"):
         parts.insert(0, f"{request['width']}x{request['height']}")
-    return f"saved {args.output} ({', '.join(parts)})"
+    return f"saved {out} ({', '.join(parts)})"
 
 
 def _ask_loaded(
@@ -416,7 +526,7 @@ def _generate_remote(
     address: remote.Address,
 ) -> str:
     """Run one job on the remote server; return the success line."""
-    out = _check_output(args)
+    folder, out = _check_output(args)
     server, loaded, matches = _ask_loaded(models, address)
     url = remote.url_of(address)
     if args.model or loaded is None:
@@ -432,12 +542,15 @@ def _generate_remote(
     remote.check_loaded(
         model, loaded, MODEL_FLAGS, address, f"genimg --start --model {model['name']}"
     )
-    job = Job(model, _job_options(args, model, config), out)
+    options = _job_options(args, model, config)
+    if out is None:
+        out = _auto_output(folder, args.prompt, model["name"], options["seed"])
+    job = Job(model, options, out)
     job.tags.update(server="remote", url=url)
     try:
         rows = run_jobs(
             [job],
-            out_dir=out.resolve().parent / ".genimg",
+            out_dir=folder.resolve() / ".genimg",
             server_defaults=config.get("image_server_args"),
             generation_defaults=config.get("image_generation_defaults"),
             open_server=lambda *_: server,
@@ -445,7 +558,7 @@ def _generate_remote(
         )
     except (OSError, ValueError) as e:
         raise GenimgError(str(e)) from e
-    return _result(rows[0], args, model, f"server: {url}")
+    return _result(rows[0], out, model, f"server: {url}")
 
 
 def main(
@@ -477,9 +590,9 @@ def main(
             parser.error(f"{modes} take no --ref or --lora")
         if (args.stop or args.status or args.list) and args.model:
             parser.error("--stop, --status and --list take no --model")
-    elif not (args.prompt and args.output):
+    elif not args.prompt:
         parser.error(
-            "a prompt and -o OUTPUT are required (or use --start / --stop / --status / --list)"
+            "a prompt is required (or use --start / --stop / --status / --list)"
         )
     root = repo_root if repo_root is not None else Path(__file__).resolve().parents[2]
     try:

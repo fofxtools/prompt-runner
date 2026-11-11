@@ -6,6 +6,7 @@ function is patched to fail the test: remote mode must not start, stop, lock or 
 
 import base64
 import json
+import urllib.error
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -91,6 +92,35 @@ class TestAsk:
             RemoteError, match=r"cannot reach the server at http://192.168.56.1:8190: "
         ):
             remote.ask(ADDRESS, question)
+
+    def test_a_refused_connection_gives_the_systems_reason_and_a_hint(self):
+        refused = urllib.error.URLError(
+            ConnectionRefusedError(10061, "actively refused it")
+        )
+
+        def question() -> None:
+            raise refused
+
+        with pytest.raises(RemoteError) as e:
+            remote.ask(ADDRESS, question)
+        text = str(e.value)
+        assert "<urlopen error" not in text and "actively refused it" in text
+        assert text.endswith(". Is the server running on the host?")
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            urllib.error.HTTPError("http://x", 503, "Service Unavailable", {}, None),  # type: ignore[arg-type]
+            ValueError("bad json"),
+        ],
+    )
+    def test_a_server_that_answered_badly_gets_no_running_hint(self, error):
+        def question() -> None:
+            raise error
+
+        with pytest.raises(RemoteError) as e:
+            remote.ask(ADDRESS, question)
+        assert "Is the server running" not in str(e.value)
 
 
 class TestModelFiles:
@@ -229,6 +259,17 @@ class TestGenerate:
             }  # as configured
             assert isinstance(row["seed"], int)
 
+    def test_without_o_the_image_is_named_in_the_current_folder(
+        self, repo, tmp_path, serving, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(tmp_path)
+        with serving(diffusion_model="/models/a.gguf"):
+            assert genimg(repo, "a red apple", "--seed", "7") == 0
+        [png] = tmp_path.glob("*.png")
+        assert png.name.endswith("_a-red-apple_a_s7.png")
+        assert f"saved {png.name} (" in capsys.readouterr().out
+        assert rows(png)[0]["seed"] == 7
+
     def test_a_config_without_the_sd_server_binary_is_fine(
         self, repo, tmp_path, serving
     ):
@@ -319,7 +360,7 @@ class TestGenerate:
             assert rows(out)[0]["status"] == "failed" and not out.exists()
             assert SdCppServer.attach(port).ready()  # not stopped
 
-    def test_an_existing_file_or_a_folder_is_refused_before_the_server_is_asked(
+    def test_an_existing_file_is_refused_before_the_server_is_asked(
         self, repo, tmp_path, monkeypatch, no_keepalive, capsys
     ):
         monkeypatch.setenv(
@@ -328,14 +369,15 @@ class TestGenerate:
         taken = tmp_path / "taken.png"
         taken.write_bytes(b"mine")
         assert genimg(repo, "x", "-o", str(taken)) == 1
-        assert genimg(repo, "x", "-o", str(tmp_path)) == 1
         err = capsys.readouterr().err
-        assert (
-            "already exists" in err
-            and "is a folder" in err
-            and "cannot reach" not in err
-        )
+        assert "already exists" in err and "cannot reach" not in err
         assert taken.read_bytes() == b"mine"
+
+    def test_o_a_folder_names_the_image_in_it(self, repo, tmp_path, serving):
+        with serving(diffusion_model="/models/a.gguf"):
+            assert genimg(repo, "x", "--seed", "3", "-o", str(tmp_path)) == 0
+        [png] = tmp_path.glob("*.png")
+        assert png.name.endswith("_x_a_s3.png")
 
     def test_a_server_that_is_not_there_is_one_line(
         self, repo, tmp_path, monkeypatch, no_keepalive, capsys

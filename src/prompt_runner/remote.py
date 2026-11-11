@@ -8,6 +8,7 @@ Standard library only, and nothing from keepalive.py, so it works on Windows.
 """
 
 import os
+import urllib.error
 from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Any, TypeVar
@@ -65,7 +66,13 @@ def ask(address: Address, question: Callable[[], T]) -> T:
     try:
         return question()
     except (OSError, ValueError) as e:  # URLError and HTTPError are OSErrors
-        raise RemoteError(f"cannot reach the server at {url_of(address)}: {e}") from e
+        if isinstance(e, (ValueError, urllib.error.HTTPError)):
+            detail = str(e)  # the server answered, but not usefully
+        else:  # no connection: say what the system said, and what to look at
+            detail = f"{getattr(e, 'reason', e)}. Is the server running on the host?"
+        raise RemoteError(
+            f"cannot reach the server at {url_of(address)}: {detail}"
+        ) from e
 
 
 def _files(model: dict[str, Any], flags: tuple[str, ...]) -> list[str]:

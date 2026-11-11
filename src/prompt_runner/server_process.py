@@ -16,7 +16,7 @@ from types import TracebackType
 from typing import Any, Literal, TypeVar
 
 DEFAULT_HOST = "127.0.0.1"  # the address a server listens on unless told otherwise
-POLL_INTERVAL = 0.5
+POLL_INTERVAL = 0.1  # seconds between checks for a ready server or a finished job
 STOP_TIMEOUT = 5.0  # seconds between SIGTERM and SIGKILL
 
 ErrorKind = Literal["job_failed", "server_died"]

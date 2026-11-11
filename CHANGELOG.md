@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.2] - 2026-11-11
+
+`genimg` names the image for you when there is no `-o`, the sd-server web UI uses the model's settings, Qwen 2.1 can edit with reference images, and there are new MOSS-Image models.
+
+### genimg
+- `-o` is optional. Without it, or with `-o FOLDER/`, the image is named `<date>-<time>_<prompt words>_<model>_s<seed>.png` (up to 15 words and 100 characters of the prompt) in the current folder or FOLDER. A taken name gets `-2`, `-3`, ...; nothing is overwritten.
+- The sd-server web UI (`http://HOST:PORT/`) now defaults to the model's size, seed, sampler, scheduler, steps, sigmas, CFG and flow shift from the config (it was 512x512, 20 steps, CFG 7). LoRAs are still picked in the UI. A server started by an older `genimg` is replaced on the next call.
+
+### Models and config
+- New MOSS-Image models: `moss-image-sft-Q4_K` (50 steps), `-4step`, `-3step`, `-2step` (step LoRAs) and `moss-image-sft-turbo-Q4_K_M` (8 steps). They need stable-diffusion.cpp from 2026-10-16 or later and `--tokenizer`.
+- The Qwen-Image 2.1 models load the vision weights (`--llm_vision`), so `--ref` edits work. Before, they failed with "generate_image returned no results".
+- `default_image_model` is now `qwen-image-2.1-turbo-Q6_K_XL` (was `flux-2-klein-9b-Q4_K_M`).
+
+### Windows VM
+- A server that cannot be reached gives the system's reason, without `<urlopen error ...>`, and asks "Is the server running on the host?".
+- `diagnostics.py` no longer reports missing UTF-8 mode as a problem; the `.cmd` wrappers set `PYTHONUTF8=1`.
+
+### For developers
+- `POLL_INTERVAL` is 0.1 s (was 0.5 s): finished images and ready servers are noticed sooner, and the tests take ~28 s instead of ~81 s.
+
 ## [0.3.1] - 2026-10-22
 
 You can now use `genimg` and `llm` from a Windows VM that has no GPU, `llm` logs every reply, and `llm` has a new command line (breaking).

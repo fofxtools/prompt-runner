@@ -58,8 +58,9 @@ def system() -> None:
         not sys.flags.utf8_mode
         and locale.getpreferredencoding(False).lower() != "utf-8"
     ):
-        problem(
-            "not in UTF-8 mode: set PYTHONUTF8=1 in the .cmd (model replies and the YAML configs contain non-ASCII text)"
+        say(
+            "note: this python is not in UTF-8 mode, as expected when you run it directly. genimg.cmd and llm.cmd set "
+            "PYTHONUTF8=1 for the commands themselves; set it too if you run prompt_runner with python directly."
         )
     try:
         text = "em dash \u2014, accents \u00e9\u00e8, arrow \u2192, emoji \U0001f98a"

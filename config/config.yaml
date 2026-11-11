@@ -36,7 +36,7 @@ image_generation_defaults:
   seed: -1
 
 # genimg's default model, used when no --model is given and no server is running
-default_image_model: flux-2-klein-9b-Q4_K_M
+default_image_model: qwen-image-2.1-turbo-Q6_K_XL
 
 # llm --start's default model, used when no MODEL is given and no server is running
 default_llm_model: qwen3.5-4b

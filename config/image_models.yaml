@@ -153,11 +153,14 @@
 
 # Qwen-Image 2.1 (best one-shot renderer for long in-image text). cfg 4.0, 40 steps (the Qwen card's value; at 25 steps paragraph text
 # was much worse), ~65s per image at 1024x1024.
+# The Qwen 2.1 entries load the vision weights (--llm_vision, ~1 GB VRAM) for editing with ref_images; without them an edit fails
+# with "generate_image returned no results". Text-to-image doesn't use them.
 # https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF
 - name: qwen-image-2.1-Q6_K_XL
   server_args:
     --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q6_K_XL.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    --llm_vision: /home/shared/ai/text_encoders/mmproj-Qwen3VL-8B-Instruct-F16.gguf
     --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
   generation_options:
     sample_params: {sample_steps: 40, guidance: {txt_cfg: 4.0}}
@@ -170,6 +173,7 @@
   server_args:
     --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-turbo-Q6_K_XL.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    --llm_vision: /home/shared/ai/text_encoders/mmproj-Qwen3VL-8B-Instruct-F16.gguf
     --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
   generation_options:
     sample_params:
@@ -187,6 +191,7 @@
   server_args:
     --diffusion-model: /home/shared/ai/diffusion/gguf/qwen-image-2.1-Q6_K_XL.gguf
     --llm: /home/shared/ai/text_encoders/Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
+    --llm_vision: /home/shared/ai/text_encoders/mmproj-Qwen3VL-8B-Instruct-F16.gguf
     --vae: /home/shared/ai/vae/qwen_image_2.1_vae_bf16.safetensors
   generation_options:
     lora: [{path: pytorch_lora_weights.safetensors, multiplier: 1.0}]
@@ -389,3 +394,63 @@
     sample_params:
       guidance: {txt_cfg: 1.0, distilled_guidance: 2.5}
       custom_sigmas: [1.0, 0.6509, 0.4374, 0.2932, 0.1893, 0.1108, 0.0495, 0.00031, 0.0]
+
+# MOSS-Image SFT. Needs sd.cpp from 2026-10-16 or later. --tokenizer is required (tokenizer.json from
+# OpenMOSS-Team/MOSS-Image-Base/tokenizer). Width and height must be multiples of 16. ~48s per image at 1024x1024.
+# Also takes JSON layout prompts (boxes and exact text per element):
+# https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE.md
+# https://huggingface.co/leejet/MOSS-Image-SFT-GGUF
+- name: moss-image-sft-Q4_K
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/MOSS-Image-SFT-Q4_K.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3.5-9B-Q4_K_M.gguf
+    --tokenizer: /home/shared/ai/tokenizers/tokenizer.json
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  generation_options:
+    sample_params: {sample_method: euler, sample_steps: 50, guidance: {txt_cfg: 3.0}}
+
+# akhaliq's 2-step experimental LoRA (same repo as the 4-step one below). Softer, lower-contrast images; the card warns of blurred or duplicated subjects.
+- name: moss-image-sft-Q4_K-2step
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/MOSS-Image-SFT-Q4_K.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3.5-9B-Q4_K_M.gguf
+    --tokenizer: /home/shared/ai/tokenizers/tokenizer.json
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  generation_options:
+    lora: [{path: moss_image_sft_2step_v0.1.safetensors, multiplier: 1.0}]
+    sample_params: {sample_method: euler, scheduler: simple, sample_steps: 2, guidance: {txt_cfg: 1.0}}
+
+# akhaliq's 3-step draft LoRA (same repo as the 4-step one below). Only works at exactly 3 steps.
+- name: moss-image-sft-Q4_K-3step
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/MOSS-Image-SFT-Q4_K.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3.5-9B-Q4_K_M.gguf
+    --tokenizer: /home/shared/ai/tokenizers/tokenizer.json
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  generation_options:
+    lora: [{path: moss_image_sft_3step_v1.0.safetensors, multiplier: 1.0}]
+    sample_params: {sample_method: euler, scheduler: simple, sample_steps: 3, guidance: {txt_cfg: 1.0}}
+
+# MOSS-Image SFT + akhaliq's 4-step LoRA. Same server as moss-image-sft-Q4_K. ~4s per image. Use 6 steps at ~1536 wide, 8 at 2048x2048.
+# https://huggingface.co/akhaliq/MOSS-Image-SFT-4-steps
+- name: moss-image-sft-Q4_K-4step
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/MOSS-Image-SFT-Q4_K.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3.5-9B-Q4_K_M.gguf
+    --tokenizer: /home/shared/ai/tokenizers/tokenizer.json
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  generation_options:
+    lora: [{path: moss_image_sft_4step_v2.0.safetensors, multiplier: 1.0}]
+    sample_params: {sample_method: euler, scheduler: simple, sample_steps: 4, guidance: {txt_cfg: 1.0}}
+
+# MOSS-Image SFT Turbo (molbal; the source of the Turbo weights is not stated). ~6.5s per image. The *_CR files in that repo are
+# ComfyUI-only.
+# https://huggingface.co/molbal/MOSS-Image-GGUF
+- name: moss-image-sft-turbo-Q4_K_M
+  server_args:
+    --diffusion-model: /home/shared/ai/diffusion/gguf/moss_image_sft_turbo-Q4_K_M.gguf
+    --llm: /home/shared/ai/text_encoders/Qwen3.5-9B-Q4_K_M.gguf
+    --tokenizer: /home/shared/ai/tokenizers/tokenizer.json
+    --vae: /home/shared/ai/vae/full_encoder_small_decoder.safetensors
+  generation_options:
+    sample_params: {sample_method: euler, scheduler: simple, sample_steps: 8, guidance: {txt_cfg: 1.0}}

@@ -70,10 +70,10 @@ llm --start qwen3.5-4b
 
 3. Put the wrappers on your `PATH`. The folder `scripts\windows` has `genimg.cmd` and `llm.cmd`. Add it to your user `PATH`, then open a new terminal.
 
-   In PowerShell (use the path of your clone):
+   In PowerShell (edit `$folder` path as needed):
 
    ```powershell
-   $folder = "C:\Users\you\Documents\prompt-runner\scripts\windows"
+   $folder = "C:\Users\vboxuser\Documents\prompt-runner\scripts\windows"
    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $folder, "User")
    ```
 

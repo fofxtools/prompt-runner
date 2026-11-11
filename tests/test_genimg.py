@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 from unittest.mock import patch
@@ -16,7 +17,7 @@ import pytest
 import yaml
 
 from prompt_runner import keepalive
-from prompt_runner.genimg import main
+from prompt_runner.genimg import _slug, main
 from prompt_runner.image_runner import Job, run_jobs
 from prompt_runner.keepalive import KeepAliveError
 from prompt_runner.sdcpp_server import SdCppServer
@@ -352,6 +353,12 @@ class TestStart:
         assert FakeServer.instances[0].args == {
             "--lora-model-dir": "/lora",
             "--diffusion-model": "/a.gguf",
+            # the web UI's defaults (see TestWebUiDefaults)
+            "--width": 1024,
+            "--height": 1024,
+            "--seed": -1,
+            "--steps": 4,
+            "--cfg-scale": 1.0,
         }
         # The model loads on the first request, so a tiny one is made to hold the GPU memory.
         [request] = FakeServer.instances[0].requests
@@ -574,7 +581,7 @@ class TestStop:
             ["--start", "--size", "64x64"],
             ["--start", "--lora", "x"],
             ["--start", "--stop"],
-            ["a prompt"],
+            ["-o", "x.png"],
         ],
     )
     def test_bad_combinations_are_usage_errors(self, repo, tmp_path, args):
@@ -607,19 +614,6 @@ class TestLora:
 
 
 class TestErrors:
-    def test_a_folder_as_output_says_so(self, repo, tmp_path, capsys):
-        folder = tmp_path / "images"
-        folder.mkdir()
-        code = main(
-            ["a red apple", "-o", str(folder)],
-            repo_root=repo,
-            state_dir=tmp_path / "state",
-        )
-        assert code == 1
-        err = capsys.readouterr().err
-        assert "is a folder; give a file name" in err and "image.png" in err
-        assert FakeServer.instances == []
-
     def test_existing_output_is_never_overwritten(self, repo, tmp_path, capsys):
         out = tmp_path / "images" / "out.png"
         out.parent.mkdir()
@@ -696,6 +690,164 @@ class TestErrors:
         assert e.value.code == 2
 
 
+class TestAutomaticName:
+    """Without -o, or with -o a folder, genimg names the file: <date>-<time>_<slug>_<model>_s<seed>.png."""
+
+    NAME = re.compile(r"^\d{8}-\d{6}_a-red-apple_model-a_s7(-\d+)?\.png$")
+
+    @pytest.fixture(autouse=True)
+    def here(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+    def call(self, repo, tmp_path, *args: str) -> int:
+        return main(
+            ["a red apple", "--seed", "7", *args],
+            repo_root=repo,
+            state_dir=tmp_path / "state",
+        )
+
+    def test_without_o_it_goes_to_the_current_folder(self, repo, tmp_path, capsys):
+        assert self.call(repo, tmp_path) == 0
+        [png] = tmp_path.glob("*.png")
+        assert self.NAME.match(png.name)
+        assert f"saved {png.name} (" in capsys.readouterr().out
+        assert (tmp_path / ".genimg" / "runs.jsonl").is_file()
+
+    def test_o_an_existing_folder_names_it_there(self, repo, tmp_path):
+        (tmp_path / "images").mkdir()
+        assert self.call(repo, tmp_path, "-o", "images") == 0
+        [png] = (tmp_path / "images").glob("*.png")
+        assert self.NAME.match(png.name)
+        assert (tmp_path / "images" / ".genimg" / "runs.jsonl").is_file()
+
+    def test_o_with_a_trailing_slash_is_a_new_folder(self, repo, tmp_path):
+        assert self.call(repo, tmp_path, "-o", "new/") == 0
+        [png] = (tmp_path / "new").glob("*.png")
+        assert self.NAME.match(png.name)
+
+    def test_a_random_seed_is_in_the_name_and_the_request(self, repo, tmp_path):
+        assert main(["a red apple"], repo_root=repo, state_dir=tmp_path / "state") == 0
+        [png] = tmp_path.glob("*.png")
+        assert png.name.endswith(f"_s{request_of()['seed']}.png")
+
+    def test_a_taken_name_gets_a_number(self, repo, tmp_path, monkeypatch):
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 11, 10, 17, 13, 56)
+
+        monkeypatch.setattr("prompt_runner.genimg.datetime", Frozen)
+        stem = "20261110-171356_a-red-apple_model-a_s7"
+        (tmp_path / f"{stem}.png").write_bytes(b"old")
+        assert self.call(repo, tmp_path) == 0
+        assert self.call(repo, tmp_path) == 0
+        assert (tmp_path / f"{stem}.png").read_bytes() == b"old"
+        assert (tmp_path / f"{stem}-2.png").is_file()
+        assert (tmp_path / f"{stem}-3.png").is_file()
+
+    @pytest.mark.parametrize(
+        ("prompt", "slug"),
+        [
+            ("Make her dress GREEN, please!", "make-her-dress-green-please"),
+            (
+                "w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 w16",
+                "w1-w2-w3-w4-w5-w6-w7-w8-w9-w10-w11-w12-w13-w14-w15",
+            ),
+            ("Café crème brûlée", "cafe-creme-brulee"),
+            ("日本の猫", "image"),
+            (
+                "supercalifragilisticexpialidocious " * 3,
+                "supercalifragilisticexpialidocious-supercalifragilisticexpialidocious-supercalifragilisticexpialidoc",
+            ),
+        ],
+    )
+    def test_slug(self, prompt, slug):
+        assert _slug(prompt) == slug
+
+
+class TestWebUiDefaults:
+    """The model's generation options become sd-server flags, the defaults of its web UI."""
+
+    def server_args(self, tmp_path, *args: str, **model: Any) -> dict[str, Any]:
+        repo = write_repo(tmp_path / "repo")
+        entry = {
+            "name": "model-c",
+            "server_args": {"--diffusion-model": "/c.gguf"},
+            **model,
+        }
+        models = yaml.safe_load((repo / "config/image_models.yaml").read_text())
+        (repo / "config/image_models.yaml").write_text(yaml.safe_dump([*models, entry]))
+        run(repo, tmp_path, "--model", "model-c", *args)
+        return FakeServer.instances[0].args
+
+    def test_every_mapped_option_becomes_its_flag(self, tmp_path):
+        args = self.server_args(
+            tmp_path,
+            generation_options={
+                "sample_params": {
+                    "sample_method": "euler",
+                    "scheduler": "simple",
+                    "sample_steps": 8,
+                    "custom_sigmas": [1.0, 0.5, 0.0],
+                    "flow_shift": 3.0,
+                    "guidance": {"txt_cfg": 4.0, "distilled_guidance": 2.5},
+                }
+            },
+        )
+        assert args == {
+            "--lora-model-dir": "/lora",
+            "--diffusion-model": "/c.gguf",
+            "--width": 1024,
+            "--height": 1024,
+            "--seed": -1,
+            "--sampling-method": "euler",
+            "--scheduler": "simple",
+            "--steps": 8,
+            "--sigmas": "1.0,0.5,0.0",
+            "--flow-shift": 3.0,
+            "--cfg-scale": 4.0,
+            "--guidance": 2.5,
+        }
+
+    def test_sigmas_without_steps_set_steps_to_match(self, tmp_path):
+        args = self.server_args(
+            tmp_path,
+            generation_options={"sample_params": {"custom_sigmas": [1.0, 0.5, 0.0]}},
+        )
+        assert (args["--sigmas"], args["--steps"]) == ("1.0,0.5,0.0", 2)
+
+    def test_the_model_wins_over_the_config_defaults(self, tmp_path):
+        args = self.server_args(tmp_path, generation_options={"width": 768})
+        assert (args["--width"], args["--height"]) == (768, 1024)
+
+    def test_a_flag_in_server_args_wins(self, tmp_path):
+        args = self.server_args(
+            tmp_path,
+            server_args={"--diffusion-model": "/c.gguf", "--steps": 30},
+            generation_options={"sample_params": {"sample_steps": 8}},
+        )
+        assert args["--steps"] == 30
+
+    def test_loras_and_unmapped_options_add_no_flags(self, tmp_path):
+        args = self.server_args(
+            tmp_path,
+            generation_options={"lora": [BASE_LORA], "negative_prompt": "blurry"},
+        )
+        assert set(args) == {
+            "--lora-model-dir",
+            "--diffusion-model",
+            "--width",
+            "--height",
+            "--seed",
+        }
+
+    def test_per_call_size_and_seed_do_not_change_the_flags(self, tmp_path):
+        # Otherwise every call with another --size or --seed would replace the kept server.
+        args = self.server_args(tmp_path, "--size", "512x768", "--seed", "7")
+        assert (args["--width"], args["--height"], args["--seed"]) == (1024, 1024, -1)
+        assert (request_of()["width"], request_of()["seed"]) == (512, 7)
+
+
 class TestParityWithRunner:
     def test_request_equals_what_run_jobs_sends_for_the_same_options(
         self, repo, tmp_path
@@ -727,7 +879,19 @@ class TestParityWithRunner:
         )
 
         assert request_of(0) == request_of(1)
-        assert FakeServer.instances[0].args == FakeServer.instances[1].args
+        # genimg adds only the web UI's default flags to the runner's
+        genimg_args, runner_args = (
+            FakeServer.instances[0].args,
+            FakeServer.instances[1].args,
+        )
+        assert {k: genimg_args[k] for k in runner_args} == runner_args
+        assert set(genimg_args) - set(runner_args) == {
+            "--width",
+            "--height",
+            "--seed",
+            "--steps",
+            "--cfg-scale",
+        }
 
 
 class TestShim:
